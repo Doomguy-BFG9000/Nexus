@@ -146,7 +146,7 @@ export type Mode = {
 }
 
 export type Fx = {
-  kind: 'advisor' | 'spawn' | 'done' | 'jev' | 'mode'
+  kind: 'advisor' | 'spawn' | 'done' | 'jev' | 'mode' | 'route' | 'beat'
   at: number
   ms: number
   /** The agent id, Jev question, ... the effect belongs to. */

@@ -6,6 +6,7 @@ import { C, compact, elapsed, modelLabel, role } from './format'
 import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
 import { CALIBRATION, ROUTABLE, ROUTE, accept, candidates, errorKind, hintText, judge, score } from './routing'
+import { DUAL } from './orbit'
 import type { CaseResult } from './routing'
 import {
   CLASSIFY_CAP,
@@ -133,7 +134,7 @@ const PANE_OPEN = { id: PANE, title: 'swarm', columns: 92, backgroundColor: C.bg
 const FRAME_MS = 100
 const STILL_MS = 1000
 const KEYCHAIN_SERVICE = 'claude-swarm-typesafe'
-const MS = { advisor: 2400, spawn: 1600, done: 1600, jev: 900, mode: 1600 }
+const MS = { advisor: 4800, spawn: 1600, done: 1600, jev: 900, mode: 1600, route: 900, beat: 2000 }
 
 // Module variables start over on a reload; everything drawn lives in $.state.
 let opts: PluginOptions = {}
@@ -164,9 +165,9 @@ async function addLog($: EngineInterface, row: Omit<LogRow, 'at'>) {
 }
 
 /** Starts an effect that a real event caused; it ends by itself after its time. */
-async function addFx($: EngineInterface, kind: Fx['kind'], ref: string | null) {
+async function addFx($: EngineInterface, kind: Fx['kind'], ref: string | null, ms: number = MS[kind]) {
   const at = await $.clock.now()
-  await update($, fx, list => [...list.filter(f => at - f.at < f.ms), { kind, at, ms: MS[kind], ref }].slice(-24))
+  await update($, fx, list => [...list.filter(f => at - f.at < f.ms), { kind, at, ms, ref }].slice(-24))
   animate($)
 }
 
@@ -475,6 +476,7 @@ async function consult($: EngineInterface, ask: JevAsk, actualTool: string | nul
       calls: j.calls + 1,
       spentUsd: gate.spent,
     }))
+    if (out.decisions.length) await addFx($, 'route', 'observed')
     for (const d of out.decisions) {
       await addFx($, 'jev', d.question)
       await addLog($, {
@@ -496,6 +498,7 @@ async function setRouting($: EngineInterface, next: Jev['routing']) {
 
 /** The lead decided: Jev's answer missed the bar or never came. */
 async function fallback($: EngineInterface, why: string) {
+  await addFx($, 'route', 'fallback')
   await update($, jev, j => ({ ...j, fallbacks: j.fallbacks + 1, lastRoute: `fallback: ${why}` }))
   await addLog($, { who: 'jev', kind: 'info', text: 'fallback → lead decides', detail: why })
 }
@@ -519,6 +522,7 @@ async function routeRetry($: EngineInterface, tool: string, failure: string, rer
     await fallback($, verdict.why)
     return failed
   }
+  await addFx($, 'route', 'accepted')
   const again = await rerun()
   const isFixed = !('deny' in again && again.deny) && again.isError !== true
   await update($, jev, x => ({
@@ -551,6 +555,7 @@ async function routeHint($: EngineInterface, path: string, base: string, ran: an
     return ran
   }
   pendingHint = d.choice
+  await addFx($, 'route', 'accepted')
   await update($, jev, x => ({ ...x, hints: x.hints + 1, lastRoute: `hint: ${d.choice}` }))
   await addLog($, { who: 'jev', kind: 'jev', text: `routed: next file → ${d.choice}`, detail: 'hint attached · lead decides' })
   return { ...ran, context: [...(ran.context ?? []), hintText(d.choice, d)] }
@@ -982,7 +987,9 @@ export const register: Register = (on, options) => {
     for (const use of result.serverToolUses ?? []) {
       if (use.name !== 'advisor') continue
       const ms = use.endedAt === undefined ? null : use.endedAt - use.startedAt
-      const before = (await read($, lead)).contextTokens
+      // The API sums the advisor's own read into this step's usage, so the
+      // lead's figure would double: take the context Claude Code reports.
+      const before = (await read($, usage)).tokens
       await update($, advisor, a => ({
         calls: a.calls + 1,
         lastAt: use.startedAt,
@@ -990,7 +997,7 @@ export const register: Register = (on, options) => {
         contextAtCall: before,
         history: [...a.history, { at: use.startedAt, ms, context: before }].slice(-5),
       }))
-      await addFx($, 'advisor', use.id)
+      await addFx($, 'advisor', use.id, 2 * DUAL[(await read($, prefs)).advisorOrbit].cycleMs)
       await addLog($, {
         who: 'advisor',
         kind: 'advisor',

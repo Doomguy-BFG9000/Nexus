@@ -15,6 +15,7 @@ function engine(on: On, advisor: () => string | null) {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 41_000, window: 200_000, percent: 21 }, rateLimits: [] } as any }))
   let n = 0
   on('turn.step', async function* (_, e) {
     const at = 2_000_000 + n++ * 1000

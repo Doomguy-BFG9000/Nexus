@@ -94,11 +94,11 @@ test('an advisor call pulses the advisor, then the pane returns to on call', asy
   expect(await ui.find({ type: 'Text', text: /◆ consulted/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /reported just now/ })).toBeTruthy()
   await ui.unmount()
-  await clock.advance(3000)
+  await clock.advance(7000) // two cycles of the wide Dual-Orbit
   const after = await $.ui.mount(pane(90))
   expect(await after.find({ type: 'Text', text: /◇ on call/ })).toBeTruthy()
   expect(await after.find({ type: 'Text', text: /consulted|reported just now/ })).toBeFalsy()
-  expect(await after.find({ type: 'Text', text: /^3s ago$/ })).toBeTruthy()
+  expect(await after.find({ type: 'Text', text: /^7s ago$/ })).toBeTruthy()
   await after.unmount()
 })
 
@@ -111,7 +111,7 @@ test('the frame timer runs ~10 FPS while an effect plays and stops when idle', a
   const during = (await ticks($)) - t0
   expect(during).toBeGreaterThanOrEqual(8)
   expect(during).toBeLessThanOrEqual(12)
-  await clock.advance(5000) // the pulse and the fresh log row are long over
+  await clock.advance(9000) // the pulse and the fresh log row are long over
   const idle = await ticks($)
   await clock.advance(10_000)
   expect(await ticks($)).toBe(idle)
@@ -142,7 +142,7 @@ test('the lead heartbeat stops while a permission dialog waits, and resumes afte
   await clock.advance(2000)
   expect(await text($)).toMatch(/working 2s/)
   await $.turn.complete({ turnId: 't1', answer: '', durationMs: 2000, isAborted: false, reason: 'answer' })
-  expect(await text($)).toMatch(/idle · ctx/)
+  expect(await text($)).toMatch(/idle · \d+ steps/)
 })
 
 test('a spawned Haiku agent animates in, runs, and flashes done', async ($, on) => {

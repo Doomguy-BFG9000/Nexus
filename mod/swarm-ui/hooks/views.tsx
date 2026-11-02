@@ -3,6 +3,8 @@ import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId } from './modes'
+import { coreOrbit, decisionOrbit, dualOrbit, swarmOrbit } from './orbit'
+import type { AgentPhase, JevOutcome, Sprite, Tone } from './orbit'
 import { SETTINGS, prefValue } from './prefs'
 import type { Prefs } from './prefs'
 import { freshness, limitLabel, orderLimits, resetLabel, tone, usd } from './telemetry'
@@ -129,6 +131,43 @@ function modeName(s: Snapshot): string {
   return id ? MODES[id].label : 'custom'
 }
 
+type Palette = Record<Exclude<Tone, 'blank'>, string>
+const PALETTE: Record<'lead' | 'swarm' | 'advisor' | 'jev' | 'done' | 'failed', Palette> = {
+  lead: { core: C.orange, sat: C.orangeHi, trail: '#b4785a', faint: '#6e5040' },
+  swarm: { core: C.blue, sat: C.blueHi, trail: '#6487c8', faint: '#465a82' },
+  advisor: { core: C.purple, sat: C.purpleHi, trail: '#8c80d2', faint: '#5a5482' },
+  jev: { core: C.green, sat: C.greenHi, trail: '#64aa7d', faint: '#466e55' },
+  done: { core: C.green, sat: C.greenHi, trail: '#64aa7d', faint: '#466e55' },
+  failed: { core: C.red, sat: C.red, trail: C.red, faint: C.dim },
+}
+
+/** Draws an orbit sprite: one Text row per sprite row, coloured by tone. */
+function Orbit({ el, sprite, palette }: { el: El; sprite: Sprite; palette: Palette }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column">
+      {sprite.map(row => (
+        <Text>{row.map(run => (run.tone === 'blank' ? <Text>{run.text}</Text> : <Text color={palette[run.tone]}>{run.text}</Text>))}</Text>
+      ))}
+    </Box>
+  )
+}
+
+/** Where an agent's orbit is in its life, from its real lifecycle. */
+function agentPhase(s: Snapshot, a: SwarmAgent | undefined): AgentPhase {
+  if (!a) return { state: 'idle' }
+  if (a.status === 'running') return { state: 'running', sinceStart: s.now - a.startedAt }
+  if (a.status === 'done') return { state: 'done', sinceEnd: s.now - (a.endedAt ?? s.now) }
+  return { state: a.status }
+}
+
+/** The latest Jev outcome and how long ago it came, while its arc plays. */
+function lastRoute(s: Snapshot): { outcome: JevOutcome | null; ms: number | null } {
+  const f = [...s.fx].reverse().find(x => x.kind === 'route')
+  if (!f) return { outcome: null, ms: null }
+  return { outcome: f.ref as JevOutcome, ms: s.now - f.at }
+}
+
 /** A dotted track; `dots` are positions 0..1 drawn bright in `color`. */
 function Track({ el, width, dots, color }: { el: El; width: number; dots: number[]; color: string }) {
   const { Text } = el
@@ -174,6 +213,10 @@ function Header({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   )
 }
 
+function advisorFxAt(s: Snapshot): number {
+  return [...s.fx].reverse().find(f => f.kind === 'advisor')?.at ?? s.now
+}
+
 function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
   const { Box, Text } = el
   const a = s.advisor
@@ -198,7 +241,15 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
       <Box justifyContent="center">
         <Text color={C.purple}>{isOff ? '○ no advisor' : p === null ? '◇ on call' : '◆ consulted'}</Text>
       </Box>
-      <Text> </Text>
+      {!isOff && (
+        <Box justifyContent="center">
+          <Orbit
+            el={el}
+            palette={PALETTE.advisor}
+            sprite={dualOrbit(s.prefs.advisorOrbit, p === null || s.reduceMotion ? null : s.now - advisorFxAt(s))}
+          />
+        </Box>
+      )}
       {a.lastAt === null ? (
         <Box justifyContent="center"><Text color={C.dim}>{isOff ? 'advisor off' : 'Awaiting consultation.'}</Text></Box>
       ) : (
@@ -256,6 +307,9 @@ function LeadBox({ el, s }: { el: El; s: Snapshot }) {
   const isFallback = asked !== null && s.lead.model !== null && family(asked) !== family(s.lead.model)
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={beat ? C.orangeHi : C.orange} paddingX={1}>
+      <Box gap={1}>
+        <Orbit el={el} palette={PALETTE.lead} sprite={coreOrbit(isWorking(s) && !s.reduceMotion ? s.now - (s.lead.turnStartedAt ?? s.now) : null)} />
+        <Box flexDirection="column">
       <Text color={C.orange} bold>{modelLabel(s.lead.model)} · main session</Text>
       <Box justifyContent="center"><Text color={C.fg}>edits + runs tests</Text></Box>
       <Text>
@@ -264,17 +318,18 @@ function LeadBox({ el, s }: { el: El; s: Snapshot }) {
         <Text color={C.dim}>{'▯'.repeat(Math.max(0, 5 - level))}</Text>
         <Text color={C.orange}> {effort}</Text>
       </Text>
+        </Box>
+      </Box>
       {isFallback && <Text color={C.amber}>asked {modelLabel(asked)} · answered by {modelLabel(s.lead.model)}</Text>}
       {s.mode.relaunch && <Text color={C.amber}>advisor change waits for a relaunch</Text>}
       <Box justifyContent="center">
         {s.lead.turnStartedAt === null ? (
-          <Text color={C.dim}>idle · ctx {compact(s.lead.contextTokens)} · {s.lead.steps} steps</Text>
+          <Text color={C.dim}>idle · {s.lead.steps} steps</Text>
         ) : s.lead.isWaiting ? (
-          <Text color={C.amber}>◌ waiting for you<Text color={C.dim}> · ctx {compact(s.lead.contextTokens)}</Text></Text>
+          <Text color={C.amber}>◌ waiting for you</Text>
         ) : (
           <Text color={beat ? C.orangeHi : C.orange}>
             {beat ? '●' : s.reduceMotion ? '●' : '○'} working {elapsed(s.now - s.lead.turnStartedAt)}
-            <Text color={C.dim}> · ctx {compact(s.lead.contextTokens)}</Text>
           </Text>
         )}
       </Box>
@@ -311,7 +366,12 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={isOff ? C.dim : C.green} paddingX={1} width={width}>
       <Box justifyContent="space-between">
-        <Text><Text bold color={isOff ? C.dim : C.green}>JEV</Text><Text color={isOff ? C.dim : C.green}> · fork layer</Text></Text>
+        <Box gap={1}>
+          <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionOrbit(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
+          <Box flexDirection="column" justifyContent="center">
+            <Text><Text bold color={isOff ? C.dim : C.green}>JEV</Text><Text color={isOff ? C.dim : C.green}> · fork layer</Text></Text>
+          </Box>
+        </Box>
         <Text>
           <Text color={C.dim}>decisions </Text>
           <Text bold color={C.fg}>{isOff ? 'off' : j.decisions.toLocaleString('en-US')}</Text>
@@ -609,6 +669,18 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
         <Text color={C.dim}>╮</Text>
       </Box>
       <Box gap={1}>
+        {[0, 1, 2].map(i => {
+          const a = shown[i]
+          const ph = agentPhase(s, a)
+          const pal = !a ? PALETTE.swarm : a.status === 'done' ? PALETTE.done : a.status === 'failed' ? PALETTE.failed : PALETTE.swarm
+          return (
+            <Box width={boxW} justifyContent="center">
+              <Orbit el={el} palette={pal} sprite={swarmOrbit(ph, s.reduceMotion)} />
+            </Box>
+          )
+        })}
+      </Box>
+      <Box gap={1}>
         {[0, 1, 2].map(i => (
           <AgentBox el={el} a={shown[i]} s={s} width={boxW} slot={slots[i] ?? 'agent'} />
         ))}
@@ -703,7 +775,7 @@ export function PaneList({ el, s }: { el: El; s: Snapshot }) {
     <Box flexDirection="column">
       <Text>
         <Text color={C.orange}>■ {modelLabel(s.lead.model)}</Text>
-        <Text color={C.dim}> · ctx {compact(s.lead.contextTokens)} </Text>
+        <Text color={C.dim}> · ctx {compact(s.usage.tokens)} </Text>
         <Text color={C.purple}>■ advisor {s.advisor.calls}</Text>
         <Text color={C.dim}> </Text>
         <Text color={C.green}>■ jev {s.jev.status === 'on' ? s.jev.decisions : s.jev.status}</Text>

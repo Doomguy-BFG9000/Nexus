@@ -8,6 +8,8 @@ export type Prefs = {
   /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
   animation: 'auto' | 'full' | 'reduced' | 'off'
   agentDetail: 'brief' | 'full'
+  /** The advisor's Dual-Orbit: tight and quick, or wide and slow. */
+  advisorOrbit: 'tight' | 'wide'
   telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
   /** Session log rows above the prompt, 0 to 6. */
   logRows: number
@@ -33,6 +35,7 @@ export const DEFAULT_PREFS: Prefs = {
   layout: 'auto',
   animation: 'auto',
   agentDetail: 'full',
+  advisorOrbit: 'wide',
   telemetry: { context: true, cost: true, usage: true, tokens: false },
   logRows: 4,
   jev: 'bars',
@@ -57,6 +60,7 @@ export function migrate(raw: unknown): Prefs {
     layout: pick(r.layout, ['auto', 'full', 'compact', 'minimal'], d.layout),
     animation: pick(r.animation, ['auto', 'full', 'reduced', 'off'], d.animation),
     agentDetail: pick(r.agentDetail, ['brief', 'full'], d.agentDetail),
+    advisorOrbit: pick(r.advisorOrbit, ['tight', 'wide'], d.advisorOrbit),
     telemetry: {
       context: bool(t.context, d.telemetry.context),
       cost: bool(t.cost, d.telemetry.cost),
@@ -82,6 +86,7 @@ export const SETTINGS: { key: string; options?: string[]; range?: [number, numbe
   { key: 'layout', options: ['auto', 'full', 'compact', 'minimal'], help: 'dashboard layout' },
   { key: 'animation', options: ['auto', 'full', 'reduced', 'off'], help: 'motion (auto follows reduceMotion)' },
   { key: 'agentDetail', options: ['brief', 'full'], help: 'how much the agent view shows' },
+  { key: 'advisorOrbit', options: ['tight', 'wide'], help: 'advisor animation' },
   { key: 'telemetry.context', options: ['on', 'off'], help: 'context used / window' },
   { key: 'telemetry.cost', options: ['on', 'off'], help: 'session API est.' },
   { key: 'telemetry.usage', options: ['on', 'off'], help: 'plan usage bars' },
