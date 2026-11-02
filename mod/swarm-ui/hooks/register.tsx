@@ -275,6 +275,11 @@ function observeJev($: EngineInterface, ask: JevAsk, actualTool: string | null) 
   })()
 }
 
+/** The call a permission dialog held has run or been refused: the lead works again. */
+async function settleWait($: EngineInterface) {
+  await update($, lead, l => (l.isWaiting ? { ...l, isWaiting: false } : l))
+}
+
 async function markJev($: EngineInterface, reason: string) {
   const was = await read($, jev)
   if (was.status === 'down' && was.reason === reason) return
@@ -411,7 +416,7 @@ async function escalate($: EngineInterface, text: string) {
 
   const rec = MODES[modeForLevel(level)]
   const p = plan(rec.id, m.sessionAdvisor, sessionId)
-  const where = p.now ? (p.isComplete ? 'applies now' : 'main model now, advisor on relaunch') : 'needs a relaunch'
+  const where = p.now ? (p.isComplete ? 'applies now' : 'switches the main model now; the advisor waits for a relaunch') : 'needs a relaunch'
   const keep = `Keep ${modeLabel(m)}`
   const go = `Switch to ${rec.label}`
   let pick: string
@@ -545,8 +550,9 @@ export const register: Register = (on, options) => {
       steps: l.steps + 1,
       outputTokens: l.outputTokens + (usage?.output_tokens ?? 0),
       turnOutputTokens: l.turnOutputTokens + (usage?.output_tokens ?? 0),
+      // isWaiting is left alone: tools start while a step still streams, so a
+      // dialog may already be up. It clears when its call settles.
       contextTokens: context ?? l.contextTokens,
-      isWaiting: false,
     }))
 
     // The API runs the advisor inside the request and reports it only here, so
@@ -610,22 +616,27 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e)) // an observer never holds up the engine
 
-  // A permission dialog is up: the heartbeat stops. The answer is the engine's.
-  on('classic.PermissionRequest', async ($, e, next) => {
-    await update($, lead, l => (l.turnStartedAt === null ? l : { ...l, isWaiting: true }))
-    return next(e)
+  // The engine is putting a call to the person: the heartbeat stops until the
+  // call runs or the turn moves on. Read only: the verdict goes up unchanged.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'ask') await update($, lead, l => (l.turnStartedAt === null ? l : { ...l, isWaiting: true }))
+    return verdict
   }).catch(($, e, next) => next(e))
 
   // ---- tool calls: subagent activity, and what Jev observes of the lead ---
   on('tool.call', async ($, e, next) => {
-    await update($, lead, l => (l.isWaiting ? { ...l, isWaiting: false } : l))
     if (e.agentId) {
       const id = e.agentId
       await update($, agents, list => list.map(a => (a.id === id ? { ...a, tools: a.tools + 1, lastTool: String(e.tool) } : a)))
-      return next(e)
+      const done = await next(e)
+      await settleWait($)
+      return done
     }
 
     const tool = String(e.tool)
+    // This mod's own dialogs ($.ui.ask) arrive as AskUserQuestion calls: not the lead's choice.
+    if (tool === 'AskUserQuestion') return next(e)
     const path = 'file_path' in e && typeof e.file_path === 'string' ? e.file_path : ''
     const base = path.split('/').pop() ?? ''
     if (base) {
@@ -642,7 +653,9 @@ export const register: Register = (on, options) => {
     history.push(`${tool} ${base}`.trim())
     if (history.length > 12) history.shift()
 
+    // A permission dialog, when there is one, is shown inside this call.
     const ran = await next(e)
+    await settleWait($)
     const isError = 'isError' in ran && ran.isError === true
     await update($, mode, m => ({ ...m, recentErrors: isError ? m.recentErrors + 1 : 0 }))
     if (isError) {

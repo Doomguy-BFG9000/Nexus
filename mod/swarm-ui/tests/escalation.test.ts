@@ -81,7 +81,7 @@ test('approving an escalation switches the main model for the next request, this
   await start($)
   await submit($, HARD)
   expect(w.asked[0]).toMatch(/Deep Engineering task \(mentions refactor, race condition\)/)
-  expect(w.asked[0]).toMatch(/advisor on relaunch/)
+  expect(w.asked[0]).toMatch(/It switches the main model now; the advisor waits for a relaunch/)
   await step($)
   expect(w.models).toEqual(['opus'])
   expect(w.efforts).toEqual(['xhigh'])

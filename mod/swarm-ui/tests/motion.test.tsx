@@ -45,7 +45,9 @@ function engine(on: On, opts: { reduceMotion?: boolean } = {}) {
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'agent-1' }))
   on('classic.SubagentStop', () => ({}))
-  on('classic.PermissionRequest', () => ({}))
+  // The first check is put to the person; after their yes the call is allowed.
+  let checks = 0
+  on('tool.check', () => ({ decision: checks++ === 0 ? ('ask' as const) : ('allow' as const) }))
   on('tool.call', () => ({ result: { ok: true } }))
   on('turn.step', async function* (_, e) {
     const at = await Promise.resolve(1_000_000)
@@ -133,7 +135,8 @@ test('the lead heartbeat stops while a permission dialog waits, and resumes afte
   await start($)
   await $.turn.start({ text: 'go', turnId: 't1' })
   expect(await text($)).toMatch(/working 0s/)
-  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } })
+  const verdict = await $.tool.check({ tool: 'Write', file_path: '/x', content: '' } as any)
+  expect(verdict.decision).toBe('ask') // passed up unchanged
   expect(await text($)).toMatch(/waiting for you/)
   await $.tool.call({ tool: 'Bash', command: 'ls' })
   await clock.advance(2000)

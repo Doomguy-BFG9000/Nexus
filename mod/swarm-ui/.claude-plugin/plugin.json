@@ -1,6 +1,6 @@
 {
   "name": "swarm-ui",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Claude Code's own terminal as the Sonnet builds / Haiku swarms / advisor / Jev layout, with session-scoped model modes",
   "types": "./types/index.d.ts",
   "userConfig": {

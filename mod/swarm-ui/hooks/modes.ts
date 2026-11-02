@@ -65,7 +65,7 @@ export const MODES: Record<ModeId, ModeSpec> = {
     effort: 'xhigh',
     advisor: 'fable',
     level: 2,
-    cost: 'Opus 5.5 costs about 2x a Sonnet turn; Fable advisor calls bill to usage credits',
+    cost: 'Opus 5.5 is about 2x a Sonnet turn (measured $0.20 vs $0.10 for a cold one-line turn); Fable advisor calls bill to usage credits',
   },
   max: {
     id: 'max',
@@ -74,7 +74,7 @@ export const MODES: Record<ModeId, ModeSpec> = {
     effort: 'max',
     advisor: 'fable',
     level: 3,
-    cost: 'Fable 5.1 at max effort bills every turn to usage credits: the highest cost',
+    cost: 'Fable 5.1 at max effort is about 5x a Sonnet turn (measured $0.52 vs $0.10 for a cold one-line turn), every turn billed to usage credits',
   },
 }
 
