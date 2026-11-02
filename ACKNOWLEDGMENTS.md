@@ -21,3 +21,9 @@ This acknowledgment does not imply that the Cachebeat author endorses NEXUS.
 | Holding beats while agents run or a permission dialog waits; reload and session-end handling | NEXUS |
 
 Cachebeat runs as a skill with a background `Stop` hook (`asyncRewake`) that wakes the main model. Each beat is a real turn answered with ".". NEXUS uses a model fork instead, so beats don't enter the transcript and never pass through Swarm's own model-routing, escalation, Jev or advisor hooks.
+
+## Council and tool-routing design influences
+
+The proposed [NEXUS Council](mod/nexus/docs/council-and-tool-routing.md) takes inspiration from [Andrej Karpathy's LLM Council](https://github.com/karpathy/llm-council), particularly independent model reviews and synthesis. NEXUS proposes its own Security, Architecture and Performance code-review specialists and Off / Adaptive / On activation. **No LLM Council code has been copied.** The upstream repository's reuse terms must be checked before porting code.
+
+Dr. [Tian Tian](https://www.ualberta.ca/en/engineering/faculty-staff/academic-staff/tian-tian.html) contributed ideas in discussions about minimal initial agent tools, dynamic tool/model routing, small fine-tuned decision models, and longer-running autonomous metadynamics workflows. He also shared the [pi-pocket](https://github.com/alchem0x2A/pi-pocket) harness as a reference. These discussions informed the proposed tool-routing research direction; they do not imply his endorsement of NEXUS or that these features are implemented.
