@@ -16,7 +16,7 @@
 
 <img src="mod/nexus/docs/media/nexus-demo.gif" alt="Real NEXUS session with parallel agents and an advisor consultation" width="100%">
 
-<sub>[Watch in 1080p](mod/nexus/docs/media/nexus-demo-1080p.mp4) · Real session footage</sub>
+<sub>[Watch in 1080p](mod/nexus/docs/media/nexus-demo-1080p.mp4) · Real session footage · [Launch trailer](https://github.com/muhzain05/Nexus/releases/download/v0.6.0/NEXUS.mp4) · [v0.6.0 release](https://github.com/muhzain05/Nexus/releases/tag/v0.6.0)</sub>
 
 </div>
 
