@@ -5,37 +5,13 @@
 // cache is already cold, and checking a beat's own usage. Swarm's own: beats
 // are $.model.fork calls (no turn, no transcript entry, no hooks of this
 // plugin, tools denied), plus budgets, TTL evidence and the UI states. Pure.
+import type { Guard, GuardStatus, GuardTokens } from '../types'
 
-export type GuardStatus = 'OFF' | 'ARMED' | 'REFRESHING' | 'WARM' | 'EXPIRED' | 'PAUSED' | 'ERROR'
+export type { Guard, GuardStatus, GuardTokens }
 
-export type GuardTokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
-export type Guard = {
-  status: GuardStatus
-  /** Why it is in that state, in a few words. */
-  reason: string | null
-  /** When it was first armed this session: the hours cap counts from here. */
-  armedAt: number | null
-  /** The end of the lead's last real turn: idle time counts from here. */
-  activityAt: number | null
-  nextAt: number | null
-  beats: number
-  lastBeatAt: number | null
-  tokens: GuardTokens
-  /** Claude Code's own cost ledger, before and after each beat. */
-  usd: number
-  /** What the last beat cost: the next one is expected to cost about the same. */
-  lastBeatUsd: number | null
-  /** The share of the last beat's input the cache served. */
-  lastBeatRead: number | null
-  /** The share of the first real request after a beat the cache served. */
-  afterBeatRead: number | null
-  isAwaitingProof: boolean
-  /** What this session has shown of its cache lifetime. */
-  ttl: '1h' | '5m' | 'unverified'
-  ttlSource: string | null
-  errors: string[]
-}
+
+
 
 export const NEW_GUARD: Guard = {
   status: 'OFF',

@@ -1,4 +1,4 @@
-import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent, Usage, View } from '../types'
+import type { Advisor, Fx, Guard, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent, Usage, View } from '../types'
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
@@ -37,7 +37,7 @@ export type Snapshot = {
   prefs: Prefs
   usage: Usage
   models: Record<string, ModelRow>
-  guard: import('./cacheguard').Guard
+  guard: Guard
   now: number
 }
 

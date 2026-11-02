@@ -1,34 +1,10 @@
 // Dashboard preferences, kept in the plugin's own store ($.store 'prefs'),
 // never in Claude Code's settings. Pure: defaults, validation, migration.
+import type { Prefs } from '../types'
 
-export type Prefs = {
-  version: 1
-  /** auto picks by pane width; full falls back when the pane is too narrow. */
-  layout: 'auto' | 'full' | 'compact' | 'minimal'
-  /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
-  animation: 'auto' | 'full' | 'reduced' | 'off'
-  agentDetail: 'brief' | 'full'
-  /** The advisor's Dual-Orbit: tight and quick, or wide and slow. */
-  advisorOrbit: 'tight' | 'wide'
-  telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
-  /** Session log rows above the prompt, 0 to 6. */
-  logRows: number
-  jev: 'bars' | 'line' | 'hidden'
-  escalation: 'ask' | 'off'
-  cacheGuard: {
-    enabled: boolean
-    /** Minutes of verified inactivity before a beat (5 to 55). */
-    idleMin: number
-    /** Hours after which it stops by itself (1 to 24). */
-    maxHours: number
-    /** Beats per session (1 to 50). */
-    maxBeats: number
-    /** API-priced estimate per session, USD. */
-    budgetUsd: number
-    /** Arm without TTL evidence: the person states their cache lasts an hour. */
-    trustTtl: boolean
-  }
-}
+export type { Prefs }
+
+
 
 export const DEFAULT_PREFS: Prefs = {
   version: 1,

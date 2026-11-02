@@ -7,7 +7,10 @@
 //   plan usage       $.session.usage().rateLimits: the windows the last API
 //                    response reported (five_hour, seven_day, ...)
 //   tokens by model  turn.step usage, one entry per request (turnId + index)
-import type { Tokens } from '../types'
+import type { ModelRow, Tokens } from '../types'
+
+export type { ModelRow }
+
 
 /** How full a window may get before its bar turns amber, then red. */
 export const WARN_AT = 70
@@ -68,7 +71,6 @@ export function freshness(readAt: number | null, now: number): Freshness {
   return { isStale: age > STALE_MS, label: mins < 1 ? 'just now' : `${mins}m ago` }
 }
 
-export type ModelRow = Tokens & { requests: number; leadRequests: number; agentRequests: number }
 
 export function addUsage(
   rows: Record<string, ModelRow>,

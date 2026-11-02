@@ -161,6 +161,68 @@ export type LogRow = {
   detail: string
 }
 
+export type Prefs = {
+  version: 1
+  /** auto picks by pane width; full falls back when the pane is too narrow. */
+  layout: 'auto' | 'full' | 'compact' | 'minimal'
+  /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
+  animation: 'auto' | 'full' | 'reduced' | 'off'
+  agentDetail: 'brief' | 'full'
+  /** The advisor's Dual-Orbit: tight and quick, or wide and slow. */
+  advisorOrbit: 'tight' | 'wide'
+  telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
+  /** Session log rows above the prompt, 0 to 6. */
+  logRows: number
+  jev: 'bars' | 'line' | 'hidden'
+  escalation: 'ask' | 'off'
+  cacheGuard: {
+    enabled: boolean
+    /** Minutes of verified inactivity before a beat (5 to 55). */
+    idleMin: number
+    /** Hours after which it stops by itself (1 to 24). */
+    maxHours: number
+    /** Beats per session (1 to 50). */
+    maxBeats: number
+    /** API-priced estimate per session, USD. */
+    budgetUsd: number
+    /** Arm without TTL evidence: the person states their cache lasts an hour. */
+    trustTtl: boolean
+  }
+}
+
+export type ModelRow = Tokens & { requests: number; leadRequests: number; agentRequests: number }
+
+export type GuardStatus = 'OFF' | 'ARMED' | 'REFRESHING' | 'WARM' | 'EXPIRED' | 'PAUSED' | 'ERROR'
+
+export type GuardTokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+export type Guard = {
+  status: GuardStatus
+  /** Why it is in that state, in a few words. */
+  reason: string | null
+  /** When it was first armed this session: the hours cap counts from here. */
+  armedAt: number | null
+  /** The end of the lead's last real turn: idle time counts from here. */
+  activityAt: number | null
+  nextAt: number | null
+  beats: number
+  lastBeatAt: number | null
+  tokens: GuardTokens
+  /** Claude Code's own cost ledger, before and after each beat. */
+  usd: number
+  /** What the last beat cost: the next one is expected to cost about the same. */
+  lastBeatUsd: number | null
+  /** The share of the last beat's input the cache served. */
+  lastBeatRead: number | null
+  /** The share of the first real request after a beat the cache served. */
+  afterBeatRead: number | null
+  isAwaitingProof: boolean
+  /** What this session has shown of its cache lifetime. */
+  ttl: '1h' | '5m' | 'unverified'
+  ttlSource: string | null
+  errors: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'swarm-ui': {
@@ -168,10 +230,10 @@ declare module 'claude-code' {
       advisor: Shaped<Advisor>
       agents: Shaped<SwarmAgent[]>
       view: Shaped<View>
-      prefs: Shaped<import('../hooks/prefs').Prefs>
+      prefs: Shaped<Prefs>
       usage: Shaped<Usage>
-      models: Shaped<Record<string, import('../hooks/telemetry').ModelRow>>
-      guard: Shaped<import('../hooks/cacheguard').Guard>
+      models: Shaped<Record<string, ModelRow>>
+      guard: Shaped<Guard>
       jev: Shaped<Jev>
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>
