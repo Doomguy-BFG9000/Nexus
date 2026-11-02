@@ -18,9 +18,9 @@ Watch your lead model, its Haiku subagents, the advisor and the Jev router work,
 <br>
 
 <div align="center">
-<img src="mod/swarm-ui/docs/media/live-turn.gif" alt="A real turn: two Haiku agents run in parallel, finish, and the advisor is consulted" width="720">
+<img src="mod/swarm-ui/docs/media/nexus-demo.gif" alt="A real turn at 1080p: two Haiku agents run in parallel, finish, and the advisor is consulted" width="100%">
 <br>
-<sub>A real turn, recorded live: two Haiku agents run side by side, finish, and the Opus advisor is consulted. Nothing on screen is simulated.</sub>
+<sub>A real turn, recorded live at 1920×1080 and played at 1.6× speed: two Haiku agents run side by side, finish, and the Opus advisor is consulted. Nothing on screen is simulated.<br><a href="mod/swarm-ui/docs/media/nexus-demo-1080p.mp4"><b>▶ Watch the full 1080p video</b></a></sub>
 </div>
 
 <br>
@@ -106,7 +106,7 @@ Every animation starts from a real event and stops when it ends. When nothing is
 
 Click the dashboard (or press `ctrl+x tab`) and press `1`–`9`, or type `/nexus inspect search#2`. You get the agent's task, state and run time, turns over its limit, tool calls, files touched, recent actions, tokens, and its final answer.
 
-<div align="center"><img src="mod/swarm-ui/docs/screenshots/inspect.png" alt="Agent detail view" width="760"></div>
+<div align="center"><img src="mod/swarm-ui/docs/screenshots/inspect.png" alt="Agent detail view: in the dashboard and in the conversation" width="100%"></div>
 
 <br>
 
@@ -123,7 +123,7 @@ Click the dashboard (or press `ctrl+x tab`) and press `1`–`9`, or type `/nexus
 </tr>
 </table>
 
-<div align="center"><img src="mod/swarm-ui/docs/screenshots/nexus-about.png" alt="/nexus-about" width="760"><br><sub><b>/nexus-about</b>: a first-run guide with a three-step quick start</sub></div>
+<div align="center"><img src="mod/swarm-ui/docs/screenshots/nexus-about.png" alt="/nexus-about" width="100%"><br><sub><b>/nexus-about</b>: a first-run guide with a three-step quick start</sub></div>
 
 <br>
 
