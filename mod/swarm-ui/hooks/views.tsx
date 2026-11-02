@@ -1,11 +1,15 @@
-import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent } from '../types'
+import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent, View } from '../types'
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
+import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId } from './modes'
 
 // The elements come from the surface's table ($.ui.resolve(e)); views take
 // them as an argument so they stay plain functions of the state.
-type El = { Box: any; Text: any }
+type El = { Box: any; Text: any; Button?: any }
+
+/** What a focused pane can do: open one agent, or go back to the diagram. */
+export type Actions = { inspect: (id: string) => void; back: () => void; isFocused: boolean }
 
 export type Snapshot = {
   lead: Lead
@@ -17,6 +21,7 @@ export type Snapshot = {
   fx: Fx[]
   reduceMotion: boolean
   tick: number
+  view: View
   now: number
 }
 
@@ -331,40 +336,89 @@ function AgentBox({ el, a, s, width, slot }: { el: El; a: SwarmAgent | undefined
         <Box justifyContent="center"><Text color={C.dim}>idle</Text></Box>
         <Text> </Text>
         <Text> </Text>
+        <Text> </Text>
       </Box>
     )
   }
   const inner = width - 4
-  const barW = Math.max(3, inner - 8)
-  const isRunning = a.status === 'running'
-  const ratio = a.maxTurns ? a.steps / a.maxTurns : null
-  const [full, rest] = ratio === null ? ['', ''] : bar(ratio, barW)
   const born = phase(s, 'spawn', a.id)
   const ended = phase(s, 'done', a.id)
-  const border = ended !== null ? (isLit(s, ended) ? C.greenHi : C.green) : born !== null && isLit(s, born) ? C.blueHi : C.blue
+  const tone = a.isSwarm ? C.blue : C.dim
+  const border =
+    a.status === 'failed' ? C.red
+    : ended !== null && a.status === 'done' ? (isLit(s, ended) ? C.greenHi : C.green)
+    : born !== null && isLit(s, born) ? C.blueHi
+    : tone
+  const status =
+    a.status === 'running' ? <Text color={C.blue}>{spin(s)} running {elapsed(s.now - a.startedAt)}</Text>
+    : a.status === 'done' ? <Text color={ended !== null ? C.greenHi : C.green} bold={ended !== null}>✓ done {elapsed((a.endedAt ?? s.now) - a.startedAt)}</Text>
+    : a.status === 'failed' ? <Text color={C.red}>✗ failed</Text>
+    : <Text color={C.dim}>◌ cancelled</Text>
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={border} paddingX={1} width={width}>
-      <Box justifyContent="center"><Text bold color={C.fg}>{role(a.type)}</Text></Box>
-      <Box justifyContent="center"><Text color={C.blue}>{modelLabel(a.model)}</Text></Box>
-      {ratio === null ? (
-        <Box justifyContent="center"><Text color={C.dim}>{a.steps} turns · {a.tools} tools</Text></Box>
+    <Box flexDirection="column" borderStyle={a.isSwarm ? 'single' : 'round'} borderColor={border} paddingX={1} width={width}>
+      <Box justifyContent="center"><Text bold color={C.fg}>{pad(a.label, inner).trimEnd()}</Text></Box>
+      <Box justifyContent="center"><Text color={tone}>{a.isSwarm ? modelLabel(a.model) : `fallback · ${modelLabel(a.model)}`}</Text></Box>
+      <Box justifyContent="center"><Text color={C.fg}>{pad(a.isWorktree ? 'in a worktree' : a.description || a.type, inner).trimEnd()}</Text></Box>
+      <Box justifyContent="center"><Text color={C.dim}>{turnsLabel(a)}</Text></Box>
+      <Box justifyContent="center">{status}</Box>
+    </Box>
+  )
+}
+
+/** One agent in full, inside the pane. Only real, reported fields; the rest reads N/A. */
+export function AgentDetail({ el, a, s, act, width }: { el: El; a: SwarmAgent | undefined; s: Snapshot; act: Actions; width: number }) {
+  const { Box, Text, Button } = el
+  const row = (label: string, value: string, color: string = C.fg) => (
+    <Text><Text color={C.dim}>{pad(label, 10)}</Text><Text color={color}>{value}</Text></Text>
+  )
+  if (!a) return <Text color={C.dim}>That agent is no longer in this session's list.</Text>
+  return (
+    <Box flexDirection="column" width={width} borderStyle={a.isSwarm ? 'single' : 'round'} borderColor={a.isSwarm ? C.blue : C.dim} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text bold color={C.fg}>{a.label}<Text color={C.blue}> · {modelLabel(a.model)}</Text>{a.isSwarm ? '' : <Text color={C.dim}> · fallback</Text>}</Text>
+        <Text color={a.status === 'failed' ? C.red : a.status === 'running' ? C.blue : C.green}>{stateLabel(a, s.now)}</Text>
+      </Box>
+      <Text> </Text>
+      {row('task', a.description || 'N/A')}
+      {row('prompt', a.prompt || 'N/A', C.dim)}
+      {row('turns', `${turnsLabel(a)} · tools ${a.tools}${a.lastTool ? ` · last ${a.lastTool}` : ''}`)}
+      {row('tokens', tokensLabel(a.tokens))}
+      {row('reported', a.reportedTokens === null ? 'N/A' : `${compact(a.reportedTokens)} total (Agent result)`, C.dim)}
+      {row('cost', 'API est. N/A per agent', C.dim)}
+      {row('files', a.files.length ? a.files.slice(-4).join(', ') : 'none', C.dim)}
+      {a.reason && row('ended', a.reason, C.red)}
+      <Text> </Text>
+      <Text color={C.dim}>recent</Text>
+      {(a.recent.length ? a.recent : [{ at: s.now, text: 'none' }]).slice(-5).map(r => (
+        <Text color={C.fg}><Text color={C.dim}>{clock(r.at)}  </Text>{r.text}</Text>
+      ))}
+      <Text> </Text>
+      <Text color={C.dim}>result</Text>
+      {(a.summary ? a.summary.split('\n').filter(l => l.trim()).slice(0, 6) : ['N/A']).map(l => <Text color={C.fg}>{l}</Text>)}
+      <Text> </Text>
+      {Button && act.isFocused ? (
+        <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
       ) : (
-        <Text>
-          <Text color={C.blue}>{full}</Text>
-          <Text color={C.dim}>{rest}</Text>
-          <Text color={C.fg}> {a.steps}/{a.maxTurns}</Text>
-        </Text>
+        <Text color={C.dim}>/swarm back · or focus the pane (ctrl+x tab) and press b</Text>
       )}
-      <Box justifyContent="center">
-        <Text color={C.fg}>{pad(a.isWorktree ? 'runs in a worktree' : a.description || (a.lastTool ?? ''), inner).trimEnd()}</Text>
-      </Box>
-      <Box justifyContent="center">
-        {isRunning ? (
-          <Text color={C.blue}>{spin(s)} running {elapsed(s.now - a.startedAt)}</Text>
-        ) : (
-          <Text color={ended !== null ? C.greenHi : C.green} bold={ended !== null}>✓ done {elapsed((a.endedAt ?? s.now) - a.startedAt)}</Text>
-        )}
-      </Box>
+    </Box>
+  )
+}
+
+/** Hotkeys 1-9 open an agent while the pane holds the focus; a hint otherwise. */
+function InspectBar({ el, s, act }: { el: El; s: Snapshot; act: Actions }) {
+  const { Box, Text, Button } = el
+  const list = s.agents.slice(-9)
+  if (list.length === 0) return null
+  const hidden = s.agents.length - Math.min(3, s.agents.length)
+  if (!Button || !act.isFocused) {
+    return <Box justifyContent="center"><Text color={C.dim}>{hidden > 0 ? `+${hidden} more · ` : ''}ctrl+x tab, then 1-{list.length} to inspect</Text></Box>
+  }
+  return (
+    <Box flexWrap="wrap" columnGap={2} justifyContent="center">
+      {list.map((a, i) => (
+        <Button key={`inspect-${a.id}`} hotkey={String(i + 1)} label={a.label} plain dimColor={a.status !== 'running'} onPress={() => act.inspect(a.id)} />
+      ))}
     </Box>
   )
 }
@@ -379,7 +433,7 @@ export function pickAgents(list: SwarmAgent[]): SwarmAgent[] {
 /** Where box `i` of three sits along a track, 0..1. */
 const SLOT_X = [0, 0.5, 1]
 
-function Diagram({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
   const { Box, Text } = el
   const shown = pickAgents(s.agents)
   const slots = ['search', 'grep', 'audit']
@@ -437,6 +491,7 @@ function Diagram({ el, s, width }: { el: El; s: Snapshot; width: number }) {
         <Track el={el} width={trackW} dots={back} color={C.greenHi} />
         <Text color={C.dim}>╯</Text>
       </Box>
+      <InspectBar el={el} s={s} act={act} />
       <Box justifyContent="center">
         <Box flexDirection="column" borderStyle="single" borderColor={back.length ? C.greenHi : C.orange} paddingX={2}>
           <Text color={C.orange} bold>back to {modelLabel(s.lead.model)} · lead</Text>
@@ -448,7 +503,7 @@ function Diagram({ el, s, width }: { el: El; s: Snapshot; width: number }) {
 }
 
 /** The full reference layout: advisor column left, the flow right. */
-export function PaneFull({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
   const { Box } = el
   const right = width - ADVISOR_W - 2
   return (
@@ -456,17 +511,29 @@ export function PaneFull({ el, s, width }: { el: El; s: Snapshot; width: number 
       <Header el={el} s={s} width={width} />
       <Box gap={2} marginTop={1}>
         <AdvisorColumn el={el} s={s} />
-        <Diagram el={el} s={s} width={right} />
+        {s.view.kind === 'agent' ? (
+          <AgentDetail el={el} a={s.agents.find(a => a.id === s.view.ref)} s={s} act={act} width={right} />
+        ) : (
+          <Diagram el={el} s={s} width={right} act={act} />
+        )}
       </Box>
     </Box>
   )
 }
 
 /** Narrower docks: the same boxes stacked, advisor as a one-line strip. */
-export function PaneCompact({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
   const { Box, Text } = el
   const a = s.advisor
   const p = phase(s, 'advisor')
+  if (s.view.kind === 'agent') {
+    return (
+      <Box flexDirection="column" width={width}>
+        <Header el={el} s={s} width={width} />
+        <AgentDetail el={el} a={s.agents.find(x => x.id === s.view.ref)} s={s} act={act} width={width} />
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" width={width}>
       <Header el={el} s={s} width={width} />
@@ -487,6 +554,7 @@ export function PaneCompact({ el, s, width }: { el: El; s: Snapshot; width: numb
         <AgentBox el={el} a={agent} s={s} width={width} slot="agent" />
       ))}
       {s.agents.length === 0 && <Text color={C.dim}>no subagents yet</Text>}
+      <InspectBar el={el} s={s} act={act} />
     </Box>
   )
 }
@@ -506,7 +574,7 @@ export function PaneList({ el, s }: { el: El; s: Snapshot }) {
       </Text>
       {pickAgents(s.agents).map(a => (
         <Text>
-          <Text color={C.blue}>{a.status === 'running' ? spin(s) : '✓'} {pad(role(a.type), 8)}</Text>
+          <Text color={a.isSwarm ? C.blue : C.dim}>{a.status === 'running' ? spin(s) : a.status === 'done' ? '✓' : a.status === 'failed' ? '✗' : '◌'} {pad(a.label, 10)}</Text>
           <Text color={C.fg}> {a.steps}{a.maxTurns ? `/${a.maxTurns}` : ''} turns · {a.tools} tools</Text>
         </Text>
       ))}

@@ -67,7 +67,7 @@ test('a spawned subagent gets a box from the real spawn event', async ($, on) =>
 
   for (const width of [90, 60]) {
     const ui = await $.ui.mount(pane(width))
-    expect(await ui.find({ type: 'Text', text: /^search$/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /^search#1$/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /haiku 5\.5/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /running/ })).toBeTruthy()
     await ui.unmount()

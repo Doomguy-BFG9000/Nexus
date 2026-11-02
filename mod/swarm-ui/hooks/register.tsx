@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
-import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, SwarmAgent } from '../types'
+import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, SwarmAgent, View } from '../types'
 import { C, compact, elapsed, modelLabel, role } from './format'
 import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
@@ -20,8 +20,9 @@ import {
   pairing,
   plan,
 } from './modes'
+import { agentDetail, agentList } from './inspect'
 import { Band, PaneCompact, PaneFull, PaneList, SpinnerLine, isAnimating } from './views'
-import type { Snapshot } from './views'
+import type { Actions, Snapshot } from './views'
 
 // Bump a shape tag whenever that value's fields change: values stored by an
 // earlier version outlive a reload and are declined, not misread.
@@ -50,8 +51,11 @@ export const advisor = atom(
 export const agents = atom(
   { plugin: 'swarm-ui', key: 'agents' } as const,
   [] as SwarmAgent[],
-  { shape: 'agents-1' },
+  { shape: 'agents-2' },
 )
+
+/** What the pane shows: the diagram, or one agent, settings, usage or Cache Guard in detail. */
+export const view = atom({ plugin: 'swarm-ui', key: 'view' } as const, { kind: 'diagram', ref: null } as View, { shape: 'view-1' })
 
 export const jev = atom(
   { plugin: 'swarm-ui', key: 'jev' } as const,
@@ -170,7 +174,7 @@ async function frame($: EngineInterface) {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot> {
-  const [l, a, list, j, rows, m, f, r, t, now] = await Promise.all([
+  const [l, a, list, j, rows, m, f, r, t, v, now] = await Promise.all([
     read($, lead),
     read($, advisor),
     read($, agents),
@@ -180,9 +184,60 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
     read($, fx),
     read($, reduceMotion),
     read($, tick),
+    read($, view),
     $.clock.now(),
   ])
-  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, now }
+  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, now }
+}
+
+/** Applies `change` to one agent by id. */
+async function patchAgent($: EngineInterface, id: string, change: (a: SwarmAgent) => SwarmAgent) {
+  await update($, agents, list => list.map(a => (a.id === id ? change(a) : a)))
+}
+
+/** Ends an agent's run once: a later report never reopens or relabels it. */
+async function finishAgent($: EngineInterface, id: string, status: SwarmAgent['status'], reason: string | null) {
+  const now = await $.clock.now()
+  const agent = (await read($, agents)).find(a => a.id === id)
+  if (!agent || agent.status !== 'running') return
+  await patchAgent($, id, a => ({ ...a, status, reason, endedAt: now }))
+  await addFx($, 'done', id)
+  await addLog($, {
+    who: who(agent.type),
+    kind: status === 'done' ? 'done' : 'error',
+    text: `${agent.label} ${status === 'done' ? `done in ${elapsed(now - agent.startedAt)}` : status}`,
+    detail: status === 'done' ? `${agent.steps} turns · ${agent.tools} tools` : (reason ?? ''),
+  })
+}
+
+/** What a tool call names: a file path when it has one, else a short form of its main argument. */
+function toolTarget(e: Record<string, unknown>): { file: string | null; label: string } {
+  const path = ['file_path', 'notebook_path', 'path'].map(k => e[k]).find(v => typeof v === 'string') as string | undefined
+  if (path) {
+    const rel = cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path
+    return { file: rel, label: rel.split('/').pop() ?? rel }
+  }
+  const arg = ['pattern', 'command', 'query', 'url'].map(k => e[k]).find(v => typeof v === 'string') as string | undefined
+  return { file: null, label: arg ? (arg.length > 28 ? `${arg.slice(0, 27)}…` : arg) : '' }
+}
+
+/** The Agent tool's own totals, matched to the instance by its tool_use_id. */
+async function recordAgentResult($: EngineInterface, toolUseId: string | undefined, result: unknown) {
+  if (!toolUseId || !result || typeof result !== 'object') return
+  const r = result as { totalTokens?: unknown; resolvedModel?: unknown }
+  const total = typeof r.totalTokens === 'number' ? r.totalTokens : null
+  const model = typeof r.resolvedModel === 'string' ? r.resolvedModel : null
+  if (total === null && model === null) return
+  await update($, agents, list =>
+    list.map(a => (a.toolUseId === toolUseId ? { ...a, reportedTokens: total ?? a.reportedTokens, model: model ?? a.model } : a)),
+  )
+}
+
+/** An instance by its number in /swarm agents (1-based) or its label. */
+export function findAgent(list: SwarmAgent[], ref: string): SwarmAgent | undefined {
+  const n = Number(ref)
+  if (Number.isInteger(n) && n >= 1) return list[n - 1]
+  return list.find(a => a.label === ref || a.id === ref)
 }
 
 /** maxTurns and isolation from the agent's definition file, when it has one. */
@@ -639,9 +694,23 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'swarm' }, async $ => {
+  on('command.run', { command: 'swarm' }, async ($, e) => {
+    const [sub = '', ...rest] = e.args.trim().split(/\s+/)
+    const arg = rest.join(' ')
+    const list = await read($, agents)
+    if (sub === 'agents') return { text: agentList(list) }
+    if (sub === 'inspect') {
+      const agent = arg ? findAgent(list, arg) : list.find(a => a.status === 'running') ?? list.at(-1)
+      if (!agent) return { text: list.length ? `No agent "${arg}".\n${agentList(list)}` : 'No agents this session yet.' }
+      await update($, view, () => ({ kind: 'agent' as const, ref: agent.id }))
+      return { text: agentDetail(agent, await $.clock.now()) }
+    }
+    if (sub === 'back') {
+      await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
+      return { text: 'Swarm pane: diagram.' }
+    }
     const opened = await $.ui.open(PANE_OPEN)
-    return { text: opened.isPlaced ? 'Swarm pane opened.' : `Swarm pane waits: ${opened.reason}` }
+    return { text: opened.isPlaced ? 'Swarm pane opened. ctrl+x tab focuses it; then 1-9 inspect an agent.' : `Swarm pane waits: ${opened.reason}` }
   })
 
   on('command.run', { command: 'swarm-mode' }, async ($, e) => {
@@ -696,6 +765,9 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
+    else if (e.reason === 'aborted' || e.isAborted) await finishAgent($, e.agentId, 'cancelled', 'interrupted')
+    else if (e.reason === 'error') await finishAgent($, e.agentId, 'failed', 'the run ended on an error')
+    else if (e.reason === 'refusal') await finishAgent($, e.agentId, 'failed', 'the model refused')
     return next(e)
   })
 
@@ -703,8 +775,20 @@ export const register: Register = (on, options) => {
     if (e.agentId) {
       const result = yield* next(e)
       const id = e.agentId
-      const model = result.usage?.model
-      await update($, agents, list => list.map(a => (a.id === id ? { ...a, steps: a.steps + 1, model: model ?? a.model } : a)))
+      const u = result.usage
+      await patchAgent($, id, a => ({
+        ...a,
+        steps: a.steps + 1,
+        model: u?.model ?? a.model,
+        tokens: u
+          ? {
+              input: a.tokens.input + u.input_tokens,
+              output: a.tokens.output + u.output_tokens,
+              cacheRead: a.tokens.cacheRead + u.cache_read_input_tokens,
+              cacheWrite: a.tokens.cacheWrite + u.cache_creation_input_tokens,
+            }
+          : a.tokens,
+      }))
       return result
     }
 
@@ -769,10 +853,14 @@ export const register: Register = (on, options) => {
     if (!spawned.agentId) return spawned
 
     const def = await definition($, e.subagentType)
+    const sameType = (await read($, agents)).filter(a => a.type === e.subagentType).length
     const agent: SwarmAgent = {
       id: spawned.agentId,
       type: e.subagentType,
+      label: `${role(e.subagentType)}#${sameType + 1}`,
+      isSwarm: e.subagentType.startsWith('swarm-'),
       description: e.description,
+      prompt: (e.prompt.split('\n').find(line => line.trim()) ?? '').trim().slice(0, 160),
       model: spawned.model,
       status: 'running',
       steps: 0,
@@ -782,27 +870,24 @@ export const register: Register = (on, options) => {
       isWorktree: def.isWorktree,
       startedAt: await $.clock.now(),
       endedAt: null,
+      files: [],
+      recent: [],
+      summary: null,
+      reason: null,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      reportedTokens: null,
+      toolUseId: e.tool_use_id ?? null,
     }
-    await update($, agents, list => [...list.filter(a => a.id !== agent.id), agent].slice(-24))
+    await update($, agents, list => [...list.filter(a => a.id !== agent.id), agent].slice(-40))
     await addFx($, 'spawn', agent.id)
-    await addLog($, { who: who(agent.type), kind: 'start', text: 'started', detail: e.description })
+    await addLog($, { who: who(agent.type), kind: 'start', text: `${agent.label} started`, detail: e.description })
     return spawned
   }).catch(($, e, next) => next(e)) // an observer never holds up the engine
 
   on('classic.SubagentStop', async ($, e, next) => {
-    const now = await $.clock.now()
-    const list = await read($, agents)
-    const agent = list.find(a => a.id === e.agent_id)
-    if (agent && agent.status === 'running') {
-      await update($, agents, all => all.map(a => (a.id === e.agent_id ? { ...a, status: 'done' as const, endedAt: now } : a)))
-      await addFx($, 'done', agent.id)
-      await addLog($, {
-        who: who(agent.type),
-        kind: 'done',
-        text: `done in ${elapsed(now - agent.startedAt)}`,
-        detail: `${agent.steps} turns · ${agent.tools} tools`,
-      })
-    }
+    const last = typeof e.last_assistant_message === 'string' ? e.last_assistant_message.trim().slice(0, 600) : ''
+    if (last) await patchAgent($, e.agent_id, a => ({ ...a, summary: last }))
+    await finishAgent($, e.agent_id, 'done', null)
     return next(e)
   }).catch(($, e, next) => next(e)) // an observer never holds up the engine
 
@@ -818,8 +903,20 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     if (e.agentId) {
       const id = e.agentId
-      await update($, agents, list => list.map(a => (a.id === id ? { ...a, tools: a.tools + 1, lastTool: String(e.tool) } : a)))
+      const name = String(e.tool)
+      const target = toolTarget(e)
+      const at = await $.clock.now()
+      await patchAgent($, id, a => ({
+        ...a,
+        tools: a.tools + 1,
+        lastTool: name,
+        files: target.file && !a.files.includes(target.file) ? [...a.files, target.file].slice(-12) : a.files,
+        recent: [...a.recent, { at, text: `${name} ${target.label}`.trim() }].slice(-6),
+      }))
       const done = await next(e)
+      if ('isError' in done && done.isError === true) {
+        await patchAgent($, id, a => ({ ...a, recent: [...a.recent, { at, text: `${name} failed` }].slice(-6) }))
+      }
       await settleWait($)
       return done
     }
@@ -853,6 +950,7 @@ export const register: Register = (on, options) => {
     // A permission dialog, when there is one, is shown inside this call.
     const ran = await next(e)
     await settleWait($)
+    if (tool === 'Agent' && 'result' in ran) await recordAgentResult($, e.tool_use_id, ran.result)
     const isError = 'isError' in ran && ran.isError === true
     await update($, mode, m => ({ ...m, recentErrors: isError ? m.recentErrors + 1 : 0 }))
     // Active routing: only a call the engine itself marked read-only, never a denied one.
@@ -869,15 +967,21 @@ export const register: Register = (on, options) => {
 
   // ---- drawing (terminal only: other surfaces keep their own look) --------
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const el = { Box, Text }
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const el = { Box, Text, Button }
     const s = await snapshot($)
     const width = e.props.bodyColumns
+    // Presses come from the person while the pane holds the focus.
+    const act: Actions = {
+      isFocused: e.props.isFocused,
+      inspect: id => void update($, view, () => ({ kind: 'agent' as const, ref: id })),
+      back: () => void update($, view, () => ({ kind: 'diagram' as const, ref: null })),
+    }
     if (e.surface !== 'terminal' || e.props.placement === 'inline' || width < COMPACT_MIN) {
       return <PaneList el={el} s={s} />
     }
-    if (width >= FULL_MIN) return <PaneFull el={el} s={s} width={width} />
-    return <PaneCompact el={el} s={s} width={width} />
+    if (width >= FULL_MIN) return <PaneFull el={el} s={s} width={width} act={act} />
+    return <PaneCompact el={el} s={s} width={width} act={act} />
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

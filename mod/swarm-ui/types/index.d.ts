@@ -31,12 +31,20 @@ export type Advisor = {
   history: { at: number; ms: number | null; context: number | null }[]
 }
 
+export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
 export type SwarmAgent = {
   id: string
   type: string
+  /** This instance's own name: the type's short name and its spawn number (`search#2`). */
+  label: string
+  /** One of the configured swarm agents (`swarm-*`); anything else is a fallback agent. */
+  isSwarm: boolean
   description: string
+  /** The first line of the prompt it was given. */
+  prompt: string
   model: string | null
-  status: 'running' | 'done'
+  status: 'running' | 'done' | 'failed' | 'cancelled'
   /** Model requests the agent made (turn.step with its agentId). */
   steps: number
   /** The agent definition's maxTurns, when it declares one. */
@@ -46,7 +54,21 @@ export type SwarmAgent = {
   isWorktree: boolean
   startedAt: number
   endedAt: number | null
+  /** Files its tool calls named, newest last. */
+  files: string[]
+  recent: { at: number; text: string }[]
+  /** Its last message, as SubagentStop reported it. */
+  summary: string | null
+  /** Why it failed or was cancelled. */
+  reason: string | null
+  /** Summed from its own requests (turn.step usage), each counted once. */
+  tokens: Tokens
+  /** totalTokens as the Agent tool's result reported it, when it did. */
+  reportedTokens: number | null
+  toolUseId: string | null
 }
+
+export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache'; ref: string | null }
 
 export type JevDecision = {
   at: number
@@ -130,6 +152,7 @@ declare module 'claude-code' {
       lead: Shaped<Lead>
       advisor: Shaped<Advisor>
       agents: Shaped<SwarmAgent[]>
+      view: Shaped<View>
       jev: Shaped<Jev>
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>
