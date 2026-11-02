@@ -1,0 +1,11 @@
+{
+  "name": "claude-swarm",
+  "owner": { "name": "Muhammad Zain" },
+  "plugins": [
+    {
+      "name": "swarm-ui",
+      "source": "./mod/swarm-ui",
+      "description": "Claude Code's own terminal as a multi-agent command center: model modes, agent inspection, advisor and Jev telemetry, usage, Cache Guard."
+    }
+  ]
+}

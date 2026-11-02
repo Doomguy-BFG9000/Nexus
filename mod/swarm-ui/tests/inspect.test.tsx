@@ -129,3 +129,14 @@ test('inspecting an unknown agent explains and lists the real ones', async ($, o
   await spawn($, 'swarm-search', 'maps', 'tu1')
   expect((await run($, 'inspect nope')).text).toMatch(/No agent "nope"[\s\S]*search#1/)
 })
+
+test('an answer handed back through a tool call becomes the result; the working folder reads as .', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await spawn($, 'swarm-grep', 'finds x', 'tu1')
+  await $.tool.call({ tool: 'Bash', path: '/repo', command: 'grep -rn x', agentId: 'agent-1' } as any)
+  await $.tool.call({ tool: 'SubagentHandback', result: 'x is defined in src/x.ts:12', agentId: 'agent-1' } as any)
+  const out = (await ($ as any).command.run({ command: 'swarm', args: 'inspect grep#1' })).text
+  expect(out).toMatch(/x is defined in src\/x\.ts:12/)
+  expect(out).toMatch(/files     \./)
+})

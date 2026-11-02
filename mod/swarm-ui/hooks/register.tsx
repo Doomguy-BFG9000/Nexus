@@ -503,7 +503,7 @@ async function finishAgent($: EngineInterface, id: string, status: SwarmAgent['s
 function toolTarget(e: Record<string, unknown>): { file: string | null; label: string } {
   const path = ['file_path', 'notebook_path', 'path'].map(k => e[k]).find(v => typeof v === 'string') as string | undefined
   if (path) {
-    const rel = cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path
+    const rel = cwd && path === cwd ? '.' : cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path
     return { file: rel, label: rel.split('/').pop() ?? rel }
   }
   const arg = ['pattern', 'command', 'query', 'url'].map(k => e[k]).find(v => typeof v === 'string') as string | undefined
@@ -1259,6 +1259,11 @@ export const register: Register = (on, options) => {
         files: target.file && !a.files.includes(target.file) ? [...a.files, target.file].slice(-12) : a.files,
         recent: [...a.recent, { at, text: `${name} ${target.label}`.trim() }].slice(-6),
       }))
+      // Some agents hand their answer back through a tool call rather than a final message.
+      if (name === 'SubagentHandback') {
+        const text = ['result', 'message', 'summary', 'content', 'text'].map(k => (e as Record<string, unknown>)[k]).find(v => typeof v === 'string') as string | undefined
+        if (text?.trim()) await patchAgent($, id, a => ({ ...a, summary: text.trim().slice(0, 600) }))
+      }
       const done = await next(e)
       if ('isError' in done && done.isError === true) {
         await patchAgent($, id, a => ({ ...a, recent: [...a.recent, { at, text: `${name} failed` }].slice(-6) }))

@@ -1,7 +1,7 @@
 {
   "name": "swarm-ui",
-  "version": "0.3.0",
-  "description": "Claude Code's own terminal as the Sonnet builds / Haiku swarms / advisor / Jev layout, with session-scoped model modes",
+  "version": "0.4.0",
+  "description": "Claude Code's own terminal as a multi-agent command center: model modes, agent inspection, advisor and Jev telemetry, usage, Cache Guard",
   "types": "./types/index.d.ts",
   "userConfig": {
     "escalation": {
@@ -42,5 +42,6 @@
         "off"
       ]
     }
-  }
+  },
+  "license": "MIT"
 }
