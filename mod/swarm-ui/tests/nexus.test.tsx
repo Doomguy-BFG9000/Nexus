@@ -93,7 +93,7 @@ test('/nexus-help and /nexus-about draw in the transcript: mark, wordmark, secti
     expect(help).toContain(want)
   expect(help).not.toMatch(/\/swarm /)
   const about = await texts($, { plugin: 'swarm-ui', component: 'Placed', surface: 'terminal', props: { id: 'about-2', plugin: 'swarm-ui' } })
-  for (const want of ['What it is', 'Who does the work', 'Modes', 'What the numbers mean', 'Cache Guard', 'Quick start'])
+  for (const want of ['What it is', 'Who does the work', 'Modes', 'What the numbers mean', 'Cache Guard', 'Quick start', 'Created by', 'Muhammad Zain'])
     expect(about).toContain(want)
 })
 

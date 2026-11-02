@@ -61,7 +61,7 @@ test('overlapping instances of one type get their own identity; a fallback agent
   const all = await texts($)
   expect(all).toMatch(/search#1/)
   expect(all).toMatch(/search#2/)
-  expect(all).toMatch(/sonnet 5\.5 · fa(llback|…)/) // cut to the card's width
+  expect(all).toMatch(/sonnet 5\.5 · f(allback|a…|…)/) // cut to the card's width
   const list = (await run($, 'agents')).text
   expect(list).toMatch(/1  search#1 +haiku 5\.5 +● running/)
   expect(list).toMatch(/3  general-purpose#1 +sonnet 5\.5 +● running +\[fallback\] writes a summary/)
@@ -146,7 +146,7 @@ test('cards keep their footprint: long labels and tasks are cut with an ellipsis
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await spawn($, 'general-purpose', 'Audit: correctness of the whole cache layer and its tests', 'tu1')
   const all = await texts($)
-  expect(all).toMatch(/general-pu…|general-p…/)
+  expect(all).toMatch(/general-…|general-p…|general-pu…/)
   expect(all).toMatch(/Audit: corr[a-z]*…/)
   expect(all).not.toMatch(/Audit: correctness of the whole cache layer/)
   expect(all).toMatch(/● running 0s/)

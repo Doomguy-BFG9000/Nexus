@@ -4,6 +4,7 @@
 import { C } from './format'
 
 export const NEXUS_VERSION = '0.5.0'
+export const AUTHOR = 'Muhammad Zain'
 
 type El = { Box: any; Text: any }
 
@@ -206,6 +207,9 @@ export function AboutView({ el }: { el: El }) {
         </Box>
       ))}
       <Box marginTop={1}><Text color={C.dim}>/nexus-help lists every command.</Text></Box>
+      <Box marginTop={1} justifyContent="center">
+        <Text><Text color={C.dim}>Created by </Text><Text bold color={C.fg}>{AUTHOR}</Text></Text>
+      </Box>
     </Box>
   )
 }
@@ -241,6 +245,6 @@ export function helpText(): string {
 export function aboutText(): string {
   const out = ['N E X U S · Multi-agent command center', '']
   for (const sec of ABOUT) out.push(sec.title, ...sec.lines.map(l => `  ${l}`), '')
-  out.push('Quick start', ...QUICK_START.map((r, i) => `  ${i + 1}. ${r.cmd.padEnd(20)}${r.text}`))
+  out.push('Quick start', ...QUICK_START.map((r, i) => `  ${i + 1}. ${r.cmd.padEnd(20)}${r.text}`), '', `Created by ${AUTHOR}`)
   return out.join('\n')
 }

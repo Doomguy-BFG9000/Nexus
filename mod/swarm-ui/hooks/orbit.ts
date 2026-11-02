@@ -61,15 +61,18 @@ const cyc = (ms: number, period: number) => (((ms % period) + period) % period) 
 // ---- Sonnet / lead: Core Orbit ----------------------------------------------
 /** Four satellites round an orange core; the ring breathes out and regroups. */
 export function coreOrbit(ms: number | null): Sprite {
-  const g = new Grid(7, 3)
+  // Exactly as wide as the orbit reaches, so the box centres the mark, not blank cells.
+  const g = new Grid(5, 3)
   g.put(g.cx, g.cy, '●', 'core')
   const still = ms === null
   const a0 = still ? Math.PI / 4 : TAU * cyc(ms, 1600)
-  const r = still ? 1 : 0.75 + 0.35 * ease(0.5 + 0.5 * Math.sin(TAU * cyc(ms, 2400)))
+  // Still: the four satellites on the sprite's corners (√2 on the diagonals), so
+  // the mark fills its 5×3 footprint and centres by what is drawn.
+  const r = still ? Math.SQRT2 : 0.95 + 0.35 * ease(0.5 + 0.5 * Math.sin(TAU * cyc(ms, 2400)))
   for (let k = 0; k < 4; k++) {
     const a = a0 + (k * TAU) / 4
     if (!still) g.polar(r * 0.9, a - 0.5, '·', 'faint')
-    g.polar(r * 0.9, a, '∙', 'sat')
+    g.polar(still ? r : r * 0.9, a, '∙', 'sat')
   }
   return g.sprite()
 }

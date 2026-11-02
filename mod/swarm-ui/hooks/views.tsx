@@ -45,7 +45,8 @@ export type Snapshot = {
   now: number
 }
 
-const ADVISOR_W = 26
+// Odd, so both orbit variants (13 and 21 wide) centre exactly in the panel.
+const ADVISOR_W = 27
 const QUESTIONS = ['which file', 'which tool', 'retry or stop']
 /** A log row stays highlighted this long after it is written. */
 export const FRESH_MS = 2000

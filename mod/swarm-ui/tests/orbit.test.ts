@@ -94,3 +94,9 @@ test('the one-row Jev arc crosses, then lands on the outcome, in five cells', as
   expect(plain(decisionMini('fallback', 900, false))[0]!.trim()).toBe('↩')
   expect(plain(decisionMini(null, null, false))[0]!.trim()).toBe('·')
 })
+
+test('the lead orbit has no blank edge columns, so its box centres the mark itself', async () => {
+  for (const ms of [null, 0, 400, 900]) expect(plain(coreOrbit(ms)).every(r => r.length === 5)).toBe(true)
+  // Still, the mark fills its footprint: a satellite on each corner, the core in the middle.
+  expect(plain(coreOrbit(null))).toEqual(['∙   ∙', '  ●  ', '∙   ∙'])
+})
