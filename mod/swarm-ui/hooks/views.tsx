@@ -3,13 +3,21 @@ import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId } from './modes'
+import { SETTINGS, prefValue } from './prefs'
+import type { Prefs } from './prefs'
 
 // The elements come from the surface's table ($.ui.resolve(e)); views take
 // them as an argument so they stay plain functions of the state.
 type El = { Box: any; Text: any; Button?: any }
 
 /** What a focused pane can do: open one agent, or go back to the diagram. */
-export type Actions = { inspect: (id: string) => void; back: () => void; isFocused: boolean }
+export type Actions = {
+  inspect: (id: string) => void
+  back: () => void
+  /** Sets one preference by its dotted key, as `/swarm settings` does. */
+  set: (key: string, value: string) => void
+  isFocused: boolean
+}
 
 export type Snapshot = {
   lead: Lead
@@ -22,6 +30,7 @@ export type Snapshot = {
   reduceMotion: boolean
   tick: number
   view: View
+  prefs: Prefs
   now: number
 }
 
@@ -327,6 +336,20 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   )
 }
 
+/** Jev on one line: the latest answer and the routing state. */
+function JevLine({ el, s }: { el: El; s: Snapshot }) {
+  const { Text } = el
+  const j = s.jev
+  const d = j.last.at(-1)
+  return (
+    <Text>
+      <Text color={j.status === 'off' ? C.dim : C.green} bold>jev </Text>
+      <Text color={C.dim}>{j.status === 'on' ? `${j.decisions} decisions · ${j.routing}` : `${j.status} · ${j.reason ?? ''}`}</Text>
+      {d && <Text color={d.isSharp ? C.green : C.orange}> · {d.question} → {d.choice} {d.p.toFixed(2)}</Text>}
+    </Text>
+  )
+}
+
 function AgentBox({ el, a, s, width, slot }: { el: El; a: SwarmAgent | undefined; s: Snapshot; width: number; slot: string }) {
   const { Box, Text } = el
   if (!a) {
@@ -380,7 +403,7 @@ export function AgentDetail({ el, a, s, act, width }: { el: El; a: SwarmAgent | 
       </Box>
       <Text> </Text>
       {row('task', a.description || 'N/A')}
-      {row('prompt', a.prompt || 'N/A', C.dim)}
+      {s.prefs.agentDetail === 'full' && row('prompt', a.prompt || 'N/A', C.dim)}
       {row('turns', `${turnsLabel(a)} · tools ${a.tools}${a.lastTool ? ` · last ${a.lastTool}` : ''}`)}
       {row('tokens', tokensLabel(a.tokens))}
       {row('reported', a.reportedTokens === null ? 'N/A' : `${compact(a.reportedTokens)} total (Agent result)`, C.dim)}
@@ -388,11 +411,12 @@ export function AgentDetail({ el, a, s, act, width }: { el: El; a: SwarmAgent | 
       {row('files', a.files.length ? a.files.slice(-4).join(', ') : 'none', C.dim)}
       {a.reason && row('ended', a.reason, C.red)}
       <Text> </Text>
-      <Text color={C.dim}>recent</Text>
-      {(a.recent.length ? a.recent : [{ at: s.now, text: 'none' }]).slice(-5).map(r => (
-        <Text color={C.fg}><Text color={C.dim}>{clock(r.at)}  </Text>{r.text}</Text>
-      ))}
-      <Text> </Text>
+      {s.prefs.agentDetail === 'full' && <Text color={C.dim}>recent</Text>}
+      {s.prefs.agentDetail === 'full' &&
+        (a.recent.length ? a.recent : [{ at: s.now, text: 'none' }]).slice(-5).map(r => (
+          <Text color={C.fg}><Text color={C.dim}>{clock(r.at)}  </Text>{r.text}</Text>
+        ))}
+      {s.prefs.agentDetail === 'full' && <Text> </Text>}
       <Text color={C.dim}>result</Text>
       {(a.summary ? a.summary.split('\n').filter(l => l.trim()).slice(0, 6) : ['N/A']).map(l => <Text color={C.fg}>{l}</Text>)}
       <Text> </Text>
@@ -400,6 +424,39 @@ export function AgentDetail({ el, a, s, act, width }: { el: El; a: SwarmAgent | 
         <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
       ) : (
         <Text color={C.dim}>/swarm back · or focus the pane (ctrl+x tab) and press b</Text>
+      )}
+    </Box>
+  )
+}
+
+/** The settings, inside the pane: Select rows while it holds the focus, else the values. */
+export function SettingsView({ el, s, act, width }: { el: El; s: Snapshot; act: Actions; width: number }) {
+  const { Box, Text, Button, Select } = el as El & { Select?: any }
+  return (
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={C.dim} paddingX={1}>
+      <Text bold color={C.fg}>settings <Text color={C.dim}>· plugin store only; Claude Code settings untouched</Text></Text>
+      <Text> </Text>
+      {SETTINGS.filter(spec => spec.options).map(spec =>
+        Select && act.isFocused ? (
+          <Select
+            key={`set-${spec.key}`}
+            label={`${pad(spec.key, 20)}`}
+            value={prefValue(s.prefs, spec.key)}
+            options={spec.options!.map(o => ({ value: o, label: o }))}
+            onSelect={(value: string) => act.set(spec.key, value)}
+          />
+        ) : (
+          <Text><Text color={C.dim}>{pad(spec.key, 20)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text></Text>
+        ),
+      )}
+      {SETTINGS.filter(spec => spec.range).map(spec => (
+        <Text><Text color={C.dim}>{pad(spec.key, 20)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text><Text color={C.dim}>  /swarm settings {spec.key} {spec.range![0]}-{spec.range![1]}</Text></Text>
+      ))}
+      <Text> </Text>
+      {Button && act.isFocused ? (
+        <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
+      ) : (
+        <Text color={C.dim}>ctrl+x tab to edit here · /swarm settings &lt;key&gt; &lt;value&gt; · /swarm back</Text>
       )}
     </Box>
   )
@@ -469,7 +526,8 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
         <Box width={Math.min(width, 46)} flexDirection="column"><LeadBox el={el} s={s} /></Box>
       </Box>
       <Box justifyContent="center"><Text color={C.orange}>┆</Text></Box>
-      <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width, 66)} /></Box>
+      {s.prefs.jev === 'bars' && <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width, 66)} /></Box>}
+      {s.prefs.jev === 'line' && <Box justifyContent="center"><JevLine el={el} s={s} /></Box>}
       <Box justifyContent="center"><Text color={C.blue}>●</Text></Box>
       <Box justifyContent="center">
         <Text color={C.fg}>delegate to subagents · </Text>
@@ -513,6 +571,8 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
         <AdvisorColumn el={el} s={s} />
         {s.view.kind === 'agent' ? (
           <AgentDetail el={el} a={s.agents.find(a => a.id === s.view.ref)} s={s} act={act} width={right} />
+        ) : s.view.kind === 'settings' ? (
+          <SettingsView el={el} s={s} act={act} width={right} />
         ) : (
           <Diagram el={el} s={s} width={right} act={act} />
         )}
@@ -526,11 +586,15 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
   const { Box, Text } = el
   const a = s.advisor
   const p = phase(s, 'advisor')
-  if (s.view.kind === 'agent') {
+  if (s.view.kind === 'agent' || s.view.kind === 'settings') {
     return (
       <Box flexDirection="column" width={width}>
         <Header el={el} s={s} width={width} />
-        <AgentDetail el={el} a={s.agents.find(x => x.id === s.view.ref)} s={s} act={act} width={width} />
+        {s.view.kind === 'agent' ? (
+          <AgentDetail el={el} a={s.agents.find(x => x.id === s.view.ref)} s={s} act={act} width={width} />
+        ) : (
+          <SettingsView el={el} s={s} act={act} width={width} />
+        )}
       </Box>
     )
   }
@@ -549,7 +613,8 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
         </Text>
       </Box>
       <LeadBox el={el} s={s} />
-      <JevBox el={el} s={s} width={width} />
+      {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
+      {s.prefs.jev === 'line' && <JevLine el={el} s={s} />}
       {pickAgents(s.agents).map(agent => (
         <AgentBox el={el} a={agent} s={s} width={width} slot="agent" />
       ))}

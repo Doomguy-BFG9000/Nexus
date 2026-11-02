@@ -153,6 +153,7 @@ declare module 'claude-code' {
       advisor: Shaped<Advisor>
       agents: Shaped<SwarmAgent[]>
       view: Shaped<View>
+      prefs: Shaped<import('../hooks/prefs').Prefs>
       jev: Shaped<Jev>
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>

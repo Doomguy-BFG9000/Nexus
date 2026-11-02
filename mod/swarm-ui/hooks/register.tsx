@@ -21,6 +21,8 @@ import {
   plan,
 } from './modes'
 import { agentDetail, agentList } from './inspect'
+import { DEFAULT_PREFS, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
+import type { Prefs } from './prefs'
 import { Band, PaneCompact, PaneFull, PaneList, SpinnerLine, isAnimating } from './views'
 import type { Actions, Snapshot } from './views'
 
@@ -55,6 +57,9 @@ export const agents = atom(
 )
 
 /** What the pane shows: the diagram, or one agent, settings, usage or Cache Guard in detail. */
+/** Dashboard preferences: loaded from $.store at start, written back on each change. */
+export const prefs = atom({ plugin: 'swarm-ui', key: 'prefs' } as const, DEFAULT_PREFS as Prefs, { shape: 'prefs-1' })
+
 export const view = atom({ plugin: 'swarm-ui', key: 'view' } as const, { kind: 'diagram', ref: null } as View, { shape: 'view-1' })
 
 export const jev = atom(
@@ -113,9 +118,6 @@ export const LOG_KEEP = 50
 
 const PANE = 'swarm'
 const PANE_OPEN = { id: PANE, title: 'swarm', columns: 92, backgroundColor: C.bg }
-// Below this many body columns the full reference layout cannot fit.
-const FULL_MIN = 84
-const COMPACT_MIN = 40
 /** 10 frames a second while an effect plays; 1 under reduced motion (counters only). */
 const FRAME_MS = 100
 const STILL_MS = 1000
@@ -127,6 +129,8 @@ let opts: PluginOptions = {}
 let timer: Timer | null = null
 let timerMs = 0
 let isReduced = false
+/** animation: off — no timer at all; counters move only on events. */
+let isMotionOff = false
 let cwd = ''
 let home = ''
 let sessionId = ''
@@ -155,6 +159,11 @@ async function addFx($: EngineInterface, kind: Fx['kind'], ref: string | null) {
 
 // One timer, only while something on screen changes with time; none when idle.
 function animate($: EngineInterface) {
+  if (isMotionOff) {
+    timer?.cancel()
+    timer = null
+    return
+  }
   const ms = isReduced ? STILL_MS : FRAME_MS
   if (timer && timerMs === ms) return
   timer?.cancel()
@@ -174,7 +183,7 @@ async function frame($: EngineInterface) {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot> {
-  const [l, a, list, j, rows, m, f, r, t, v, now] = await Promise.all([
+  const [l, a, list, j, rows, m, f, r, t, v, pr, now] = await Promise.all([
     read($, lead),
     read($, advisor),
     read($, agents),
@@ -185,9 +194,58 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
     read($, reduceMotion),
     read($, tick),
     read($, view),
+    read($, prefs),
     $.clock.now(),
   ])
-  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, now }
+  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, now }
+}
+
+/** Preferences from the plugin's store, migrated; the first run seeds them from the plugin options. */
+async function loadPrefs($: EngineInterface) {
+  let raw: unknown
+  try {
+    raw = await $.store.get('prefs')
+  } catch {
+    raw = undefined
+  }
+  const seeded = raw ?? { escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
+  const p = migrate(seeded)
+  await update($, prefs, () => p)
+  if (JSON.stringify(raw) !== JSON.stringify(p)) await savePrefs($, p)
+}
+
+async function savePrefs($: EngineInterface, p: Prefs) {
+  try {
+    await $.store.set('prefs', p)
+  } catch {
+    // kept for this session; the next start reads the last saved value
+  }
+}
+
+/** `/swarm settings [key value]`: show, or change one, for this and later sessions. */
+async function settingsCommand($: EngineInterface, args: string): Promise<string> {
+  const [key, value] = args.split(/\s+/).filter(Boolean)
+  const current = await read($, prefs)
+  if (!key) {
+    await update($, view, () => ({ kind: 'settings' as const, ref: null }))
+    const rows = SETTINGS.map(spec => `  ${spec.key.padEnd(20)} ${prefValue(current, spec.key).padEnd(9)} ${spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`}  · ${spec.help}`)
+    return ['Swarm settings (kept in the plugin store; Claude Code settings are not touched):', ...rows, '', 'Change one: /swarm settings <key> <value>'].join('\n')
+  }
+  if (value === undefined) return `${key} is ${prefValue(current, key)}`
+  const out = setPref(current, key, value)
+  if (!out.ok) return out.why
+  await applyPrefs($, current, out.prefs)
+  return `${key} → ${prefValue(out.prefs, key)} (saved for later sessions).`
+}
+
+/** Saves and applies new preferences: pane open/closed, motion, Cache Guard. */
+async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
+  await update($, prefs, () => next)
+  await savePrefs($, next)
+  if (next.layout === 'minimal' && was.layout !== 'minimal') await $.ui.close({ id: PANE }).catch(() => undefined)
+  if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(PANE_OPEN)
+  await syncMotion($)
+  animate($)
 }
 
 /** Applies `change` to one agent by id. */
@@ -270,8 +328,12 @@ async function setting($: EngineInterface, key: 'model' | 'advisorModel'): Promi
   }
 }
 
-/** The plugin's `motion` option, else the native reduceMotion setting. */
+/** The animation preference, then the plugin's `motion` option, else the native reduceMotion setting. */
 async function prefersStill($: EngineInterface): Promise<boolean> {
+  const anim = (await read($, prefs)).animation
+  isMotionOff = anim === 'off'
+  if (anim === 'reduced' || anim === 'off') return true
+  if (anim === 'full') return false
   if (opts.motion === 'reduced') return true
   if (opts.motion === 'full') return false
   try {
@@ -593,7 +655,7 @@ async function statusText($: EngineInterface): Promise<string> {
     `Running: ${describeRunning(m, l)}${l.requested ? ` (last request asked for ${l.requested})` : ''}`,
     `Session launched with: ${modelLabel(m.sessionModel)} · advisor ${m.sessionAdvisor ?? 'off'} (from settings or --settings)`,
     `Rewrite in force: ${m.main ? `main ${m.main} · effort ${m.effort}` : 'none'}`,
-    `Escalation: ${opts.escalation === 'off' ? 'off' : 'asks first'} · Haiku checks ${m.classified}/${CLASSIFY_CAP}`,
+    `Escalation: ${(await read($, prefs)).escalation === 'off' ? 'off' : 'asks first'} · Haiku checks ${m.classified}/${CLASSIFY_CAP}`,
     `Jev: ${j.status}${j.reason ? ` (${j.reason})` : ''} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} · routing ${j.routing}`,
   ]
   if (m.relaunch) lines.push(`Relaunch for the full mode: ${m.relaunch}`)
@@ -672,6 +734,7 @@ export const register: Register = (on, options) => {
     } else {
       await update($, jev, x => ({ ...x, status: 'off' as const, reason: 'no key: TYPESAFE_API_KEY or Keychain claude-swarm-typesafe' }))
     }
+    await loadPrefs($)
     await syncMotion($)
 
     await $.command.register({
@@ -689,7 +752,7 @@ export const register: Register = (on, options) => {
     // Asked for in /config: calibrate in the background, act only once it passes.
     if (jevKey && opts.jevRouting === 'active' && routing !== 'active') void calibrate($)
     // Unasked, the engine seats it only on a wide terminal; /swarm opens it anywhere.
-    void $.ui.open(PANE_OPEN)
+    if ((await read($, prefs)).layout !== 'minimal') void $.ui.open(PANE_OPEN)
 
     return next(e)
   })
@@ -705,6 +768,8 @@ export const register: Register = (on, options) => {
       await update($, view, () => ({ kind: 'agent' as const, ref: agent.id }))
       return { text: agentDetail(agent, await $.clock.now()) }
     }
+    if (sub === 'settings') return { text: await settingsCommand($, arg) }
+    if (sub === 'layout') return { text: await settingsCommand($, `layout ${arg}`) }
     if (sub === 'back') {
       await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
       return { text: 'Swarm pane: diagram.' }
@@ -745,7 +810,7 @@ export const register: Register = (on, options) => {
   // ---- prompts: offer a stronger mode, never switch without a yes ----------
   on('prompt.submit', async ($, e, next) => {
     const isTyped = !e.command && !e.isMeta && !e.turnId && e.origin.kind === 'composer'
-    if (isTyped && opts.escalation !== 'off') await escalate($, e.text)
+    if (isTyped && (await read($, prefs)).escalation !== 'off') await escalate($, e.text)
     return next(e)
   }).catch(($, e, next) => next(e)) // a failed check never holds up the prompt
 
@@ -967,8 +1032,10 @@ export const register: Register = (on, options) => {
 
   // ---- drawing (terminal only: other surfaces keep their own look) --------
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const el = { Box, Text, Button }
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button } = els
+    // Select exists on the terminal's table; elsewhere settings read as text.
+    const el = { Box, Text, Button, Select: 'Select' in els ? els.Select : undefined }
     const s = await snapshot($)
     const width = e.props.bodyColumns
     // Presses come from the person while the pane holds the focus.
@@ -976,11 +1043,11 @@ export const register: Register = (on, options) => {
       isFocused: e.props.isFocused,
       inspect: id => void update($, view, () => ({ kind: 'agent' as const, ref: id })),
       back: () => void update($, view, () => ({ kind: 'diagram' as const, ref: null })),
+      set: (key, value) => void settingsCommand($, `${key} ${value}`),
     }
-    if (e.surface !== 'terminal' || e.props.placement === 'inline' || width < COMPACT_MIN) {
-      return <PaneList el={el} s={s} />
-    }
-    if (width >= FULL_MIN) return <PaneFull el={el} s={s} width={width} act={act} />
+    const layout = e.surface === 'terminal' ? resolveLayout(s.prefs, width, e.props.placement) : 'list'
+    if (layout === 'list') return <PaneList el={el} s={s} />
+    if (layout === 'full') return <PaneFull el={el} s={s} width={width} act={act} />
     return <PaneCompact el={el} s={s} width={width} act={act} />
   })
 
@@ -988,7 +1055,7 @@ export const register: Register = (on, options) => {
     if (e.surface !== 'terminal' || e.props.hasSurvey || e.props.view.agentId || e.props.maxRows < 2) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const s = await snapshot($)
-    const rows = Math.min(4, e.props.maxRows - 4)
+    const rows = Math.max(0, Math.min(s.prefs.logRows, e.props.maxRows - 4))
     return <Band el={{ Box, Text }} s={s} width={e.props.bodyColumns} rows={rows} />
   })
 
