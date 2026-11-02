@@ -128,3 +128,15 @@ test('NEXUS header: the wordmark and running models; the old banner is gone', as
   expect(all).toMatch(/sonnet 5\.5 lead/)
   expect(all).not.toMatch(/CLAUDE CODE SWARM|BUILDS|SWARMS/)
 })
+
+test('NEXUS sits centred on top with its subtitle beneath; the model legend runs along the bottom', async ($, on) => {
+  engine(on)
+  await start($)
+  const all = await texts($, 120)
+  const at = (re: RegExp) => all.search(re)
+  expect(at(/N E X U S/)).toBeLessThan(at(/multi-agent command center/))
+  expect(at(/multi-agent command center/)).toBeLessThan(at(/OPUS 5\.5/))
+  expect(at(/USAGE/)).toBeLessThan(at(/sonnet 5\.5 lead/))
+  expect(at(/sonnet 5\.5 lead/)).toBeLessThan(at(/opus 5\.5 advisor/))
+  expect(all).toMatch(/◈ \n?Balanced/)
+})

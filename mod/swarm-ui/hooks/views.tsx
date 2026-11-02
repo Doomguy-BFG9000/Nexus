@@ -195,24 +195,30 @@ function Track({ el, width, dots, color }: { el: El; width: number; dots: number
 
 function Header({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
+  return (
+    <Box flexDirection="column" width={width} marginTop={1}>
+      <Box justifyContent="center"><Text bold color={C.fg}>N E X U S</Text></Box>
+      <Box justifyContent="center"><Text color={C.dim}>multi-agent command center</Text></Box>
+      <Text color={C.dim}>{'─'.repeat(width)}</Text>
+    </Box>
+  )
+}
+
+/** The running models and the mode, in one row along the bottom of the pane. */
+function ModelLegend({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+  const { Box, Text } = el
   const swatch = (color: string, label: string) => (
     <Text><Text color={color}>■ </Text><Text color={C.fg}>{label}</Text></Text>
   )
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
-      <Box justifyContent="space-between" paddingX={1}>
-        <Text>
-          <Text bold color={C.fg}>N E X U S</Text>
-          <Text color={C.dim}>   multi-agent command center</Text>
-        </Text>
-        <Text><Text color={C.amber}>◈ </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
-      </Box>
       <Text color={C.dim}>{'─'.repeat(width)}</Text>
       <Box justifyContent="space-between" paddingX={1}>
         {swatch(C.orange, `${modelLabel(s.lead.model)} lead`)}
         {swatch(C.blue, `${haikuModel(s)} swarm`)}
         {swatch(C.purple, `${advisorLabel(s)} advisor`)}
         {s.prefs.jev !== 'hidden' && swatch(C.green, 'jev')}
+        <Text><Text color={C.amber}>◈ </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
       </Box>
     </Box>
   )
@@ -384,13 +390,12 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const isOff = j.status === 'off'
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={isOff ? C.dim : C.green} paddingX={1} width={width}>
-      <Box justifyContent="space-between">
-        <Box gap={1}>
-          <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionMini(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
-          <Text><Text bold color={isOff ? C.dim : C.green}>JEV</Text><Text color={isOff ? C.dim : C.green}> · fork layer</Text></Text>
-        </Box>
+      <Box justifyContent="center" gap={1}>
+        <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionMini(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
         <Text>
-          <Text color={C.dim}>decisions </Text>
+          <Text bold color={isOff ? C.dim : C.green}>JEV</Text>
+          <Text color={isOff ? C.dim : C.green}> · fork layer</Text>
+          <Text color={C.dim}> · decisions </Text>
           <Text bold color={C.fg}>{isOff ? 'off' : j.decisions.toLocaleString('en-US')}</Text>
         </Text>
       </Box>
@@ -399,7 +404,7 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       ))}
       {j.status === 'on' ? (
         <Text color={C.dim}>
-          sharp ≥ {JEV.threshold} · tool agreed {j.toolAgreed}/{j.toolChecked} · ${j.spentUsd.toFixed(4)} ·{' '}
+          sharp ≥ {JEV.threshold} · agreed {j.toolAgreed}/{j.toolChecked} · ${j.spentUsd.toFixed(4)} ·{' '}
           <Text color={j.routing === 'active' ? C.green : j.routing === 'calibrating' ? C.amber : C.dim} bold={j.routing === 'active'}>
             {j.routing === 'active' ? 'ROUTING ACTIVE' : j.routing === 'calibrating' ? 'calibrating…' : j.routing === 'off' ? 'routing off' : 'observe-only'}
           </Text>
@@ -721,7 +726,7 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
       </Box>
       <Box justifyContent="center"><TelemetryLine el={el} s={s} /></Box>
       <Box justifyContent="center"><Text color={C.orange}>┆</Text></Box>
-      {s.prefs.jev === 'bars' && <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width, 66)} /></Box>}
+      {s.prefs.jev === 'bars' && <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width - 4, 56)} /></Box>}
       {s.prefs.jev === 'line' && <Box justifyContent="center"><JevLine el={el} s={s} /></Box>}
       <Box justifyContent="center"><Text color={C.blue}>●</Text></Box>
       <Box justifyContent="center">
@@ -774,6 +779,7 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
           <Diagram el={el} s={s} width={right} act={act} />
         )}
       </Box>
+      <ModelLegend el={el} s={s} width={width} />
     </Box>
   )
 }
@@ -820,6 +826,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
       <InspectBar el={el} s={s} act={act} />
       <CacheGuardBox el={el} s={s} width={width} />
       <UsageBox el={el} s={s} width={width} />
+      <ModelLegend el={el} s={s} width={width} />
     </Box>
   )
 }

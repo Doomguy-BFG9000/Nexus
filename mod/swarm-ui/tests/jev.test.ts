@@ -93,7 +93,7 @@ test('a key from the Keychain: a real answer is drawn with p, confidence and sha
   const pane = await paneText($)
   expect(pane).toMatch(/0\.91 sharp/)
   expect(pane).toMatch(/c0\.81/)
-  expect(pane).toMatch(/tool agreed 1\/1/)
+  expect(pane).toMatch(/agreed 1\/1/)
   expect(await status($)).toMatch(/Jev: on · 1 calls · \$0\.0000 · routing observe/)
 })
 
@@ -103,7 +103,7 @@ test('the environment variable wins over the Keychain', async ($, on) => {
   await $.tool.call({ tool: 'Edit', file_path: '/r/a.ts', old_string: 'a', new_string: 'b' })
   await w.clock.settle()
   expect(w.sent[0]!.auth).toBe('Bearer env_key_1')
-  expect(await paneText($)).toMatch(/tool agreed 0\/1/)
+  expect(await paneText($)).toMatch(/agreed 0\/1/)
 })
 
 test('a split answer is drawn as split, never promoted', async ($, on) => {
