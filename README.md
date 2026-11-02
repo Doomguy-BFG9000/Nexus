@@ -2,16 +2,15 @@
 
 <img src="mod/swarm-ui/docs/media/nexus-mark.gif" alt="NEXUS: multi-agent command center" width="560">
 
-**A live command center for Claude Code, drawn right inside its own terminal.**
+## Your agents were always working. Now you can see them.
 
-Watch your lead model, its Haiku subagents, the advisor and the Jev router work, as it happens.
+A live multi-agent dashboard, docked inside Claude Code's own terminal.
 
 ![version](https://img.shields.io/badge/version-0.5.0-a99cf2?style=flat-square&labelColor=16171d)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1.316-eb9a6c?style=flat-square&labelColor=16171d)
-![native plugin](https://img.shields.io/badge/native-plugin%20API-7ea8f5?style=flat-square&labelColor=16171d)
 ![license](https://img.shields.io/badge/license-MIT-86d9a2?style=flat-square&labelColor=16171d)
 
-[Install](#install) · [Tour](#a-tour-of-the-dashboard) · [Commands](#commands) · [Modes](#model-modes) · [Cache Guard](#cache-guard) · [FAQ](#faq)
+[Install](#install) · [Roles](#four-roles-one-view) · [Screenshots](#the-dashboard) · [Modes](#model-modes) · [Commands](#commands) · [Docs](#docs)
 
 </div>
 
@@ -20,24 +19,8 @@ Watch your lead model, its Haiku subagents, the advisor and the Jev router work,
 <div align="center">
 <img src="mod/swarm-ui/docs/media/nexus-demo.gif" alt="A real turn at 1080p: two Haiku agents run in parallel, finish, and the advisor is consulted" width="100%">
 <br>
-<sub>A real turn, recorded live at 1920×1080 and played at 1.6× speed: two Haiku agents run side by side, finish, and the Opus advisor is consulted. Nothing on screen is simulated.<br><a href="mod/swarm-ui/docs/media/nexus-demo-1080p.mp4"><b>▶ Watch the full 1080p video</b></a></sub>
+<sub>A real turn, recorded live at 1920×1080 and played at 1.6×: two Haiku agents run side by side, then the Opus advisor is consulted. Nothing is simulated.<br><a href="mod/swarm-ui/docs/media/nexus-demo-1080p.mp4"><b>▶ Watch the full 1080p video</b></a></sub>
 </div>
-
-<br>
-
-## Why NEXUS
-
-Claude Code already delegates to subagents and consults an advisor, but all of that happens out of sight. NEXUS docks a dashboard beside your conversation that shows it as it happens:
-
-|  |  |
-|---|---|
-| **Who's working** | The lead's real model and effort, every subagent with its own live card, the advisor's consultations, Jev's routing answers. |
-| **What it costs** | Context used and left, the session's API-priced estimate, and your plan's 5-hour and weekly windows, all from Claude Code itself. |
-| **Control** | Switch reasoning modes, inspect any agent, choose a layout, and optionally keep the prompt cache warm while you're away. |
-
-It's a native Claude Code plugin built on the supported mod API: no wrapper app, no second terminal, no patched binary. Your prompt, permissions, shortcuts and sessions work exactly as before.
-
-> **Honest by design.** Every number comes from Claude Code. Anything it doesn't report reads `N/A`, and estimates are labelled `API est.`
 
 <br>
 
@@ -48,7 +31,7 @@ claude plugin marketplace add muhzain05/Nexus
 claude plugin install swarm-ui@claude-swarm --scope user
 ```
 
-Start a new `claude` session in the **fullscreen TUI** (`"tui": "fullscreen"` in your Claude Code settings). On a wide terminal NEXUS docks on its own; anywhere else, type `/nexus`.
+Then start a new `claude` session in the **fullscreen TUI** (`"tui": "fullscreen"` in your Claude Code settings). On a wide terminal NEXUS docks on its own; anywhere else, type `/nexus`. Built for Claude Code 2.1.316 ([compatibility](mod/swarm-ui/docs/compatibility.md)).
 
 <details>
 <summary>From a local clone</summary>
@@ -60,57 +43,71 @@ claude plugin install swarm-ui@claude-swarm --scope user
 ```
 </details>
 
-**Quick start:** open it with `/nexus` → ask for some real work (*"map this repo with subagents, then summarize"*) and watch the agents run → try `/nexus-mode` and `/nexus usage`.
-
-New to it? `/nexus-about` explains everything in the terminal, and `/nexus-help` lists every command.
+**Quick start:** `/nexus` → ask for real work (*"map this repo with subagents, then summarize"*) → try `/nexus-mode` and `/nexus usage`. `/nexus-about` explains everything in the terminal.
 
 <br>
 
-## A tour of the dashboard
+## Four roles, one view
 
-<img src="mod/swarm-ui/docs/screenshots/nexus-dashboard.png" alt="The NEXUS dashboard mid-turn" align="right" width="430">
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**① Header.** The NEXUS mark moves for as long as a turn runs, agents included, and settles when it ends. The **⚙** opens settings.
+![SONNET](https://img.shields.io/badge/SONNET-The%20Architect-eb9a6c?style=flat-square&labelColor=16171d)
 
-**② Advisor.** The advisor model (Opus 5.5, or Fable 5.1 in the stronger modes), when it was last consulted, how often and for how long, and how much context it read. It shows *Awaiting consultation.* until the first call.
+The lead. Plans, coordinates and builds: reads your request, edits and runs tests. Sonnet by default; Opus or Fable in stronger modes.
 
-**③ Lead.** The model that actually answered, its effort, and whether it's working, idle or waiting on you.
+</td>
+<td width="50%" valign="top">
 
-**④ Jev.** Routing answers as green bars: bright when **sharp** (≥ 0.85), muted when **split**.
+![HAIKU](https://img.shields.io/badge/HAIKU-The%20Workforce-7ea8f5?style=flat-square&labelColor=16171d)
 
-**⑤ Agents.** One fixed card per agent instance (`search#1`, `grep#1`, …), each with a small orbit in its corner and its state on the bottom row. Agents outside your configured set are marked *fallback*.
+Parallel subagents executing delegated work: mapping a repo, searching, reviewing. Each gets its own live card.
 
-**⑥ Cache Guard and USAGE.** The optional cache keeper, then your plan's rate-limit windows.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-**⑦ Bottom left.** Context used and left, the session estimate, the running models and the current mode.
+![OPUS](https://img.shields.io/badge/OPUS-The%20Advisor-a99cf2?style=flat-square&labelColor=16171d)
+
+The model the lead consults before difficult decisions. It reads the session and never writes code. Opus 5.5 in Balanced; Fable 5.1 in the stronger modes.
+
+</td>
+<td width="50%" valign="top">
+
+![JEV](https://img.shields.io/badge/JEV-The%20Router-86d9a2?style=flat-square&labelColor=16171d)
+
+Optional, needs a TypeSafe key. Answers small next-step questions: which file, which tool, retry or stop. Observe-only by default; [active mode](mod/swarm-ui/docs/jev.md) may only retry or annotate the lead's read-only reads.
+
+</td>
+</tr>
+</table>
+
+<br>
+
+## The dashboard
+
+<img src="mod/swarm-ui/docs/screenshots/nexus-dashboard.png" alt="The NEXUS dashboard mid-turn" align="right" width="400">
+
+- **Lead, advisor and agents** with their real models, effort and state
+- **One card per agent**; focus the dashboard and press `1`–`9` (or `/nexus inspect <label>`) to see its task, tools, files and answer. Built-in agents such as Explore are marked *fallback* with the model they really ran on
+- **Context, session cost and plan usage**, straight from Claude Code
+- **Model modes** you switch per session
+- **Cache Guard** (optional) keeps the prompt cache warm while you're away
+- **Motion only on real events**; idle means no redraws, and reduced motion is respected
+
+A native plugin on Claude Code's mod API: no wrapper, no second terminal, no patched binary.
+
+> **Honest by design.** Every number comes from Claude Code. Anything it doesn't report reads `N/A`, and estimates are labelled `API est.`
+
+[Full dashboard tour →](mod/swarm-ui/docs/dashboard.md)
 
 <br clear="right">
 
-<br>
-
-### Motion that means something
-
-Every animation starts from a real event and stops when it ends. When nothing is happening, NEXUS doesn't redraw at all, and reduced motion swaps every animation for a still frame.
-
-<div align="center">
-<img src="mod/swarm-ui/docs/media/orbits.gif" alt="The NEXUS mark, lead, Haiku and Jev animations" width="760">
-<br><br>
-<img src="mod/swarm-ui/docs/media/advisor-orbit.gif" alt="The advisor's Dual-Orbit animation" width="520">
-<br>
-<sub>The advisor runs inside an API request, so Claude Code reports it only once that request ends. Its animation plays then, marked "reported just now", and never pretends to be live.</sub>
-</div>
+<div align="center"><img src="mod/swarm-ui/docs/screenshots/inspect.png" alt="Agent detail view: in the dashboard and in the conversation" width="100%"><br><sub>Inspecting an agent, in the dashboard and in the conversation</sub></div>
 
 <br>
-
-### Inspect any agent
-
-Click the dashboard (or press `ctrl+x tab`) and press `1`–`9`, or type `/nexus inspect search#2`. You get the agent's task, state and run time, turns over its limit, tool calls, files touched, recent actions, tokens, and its final answer.
-
-<div align="center"><img src="mod/swarm-ui/docs/screenshots/inspect.png" alt="Agent detail view: in the dashboard and in the conversation" width="100%"></div>
-
-<br>
-
-### Settings, help and onboarding
 
 <table>
 <tr>
@@ -118,12 +115,22 @@ Click the dashboard (or press `ctrl+x tab`) and press `1`–`9`, or type `/nexus
 <td width="50%"><img src="mod/swarm-ui/docs/screenshots/nexus-help.png" alt="/nexus-help"></td>
 </tr>
 <tr>
-<td align="center"><sub><b>⚙ Settings</b>: layout, motion, telemetry, log rows, Jev, Cache Guard. Kept in the plugin's own store; your Claude Code settings are never touched.</sub></td>
-<td align="center"><sub><b>/nexus-help</b>: every command and shortcut, drawn in the transcript</sub></td>
+<td align="center"><sub><b>⚙ Settings</b>, kept in the plugin's own store</sub></td>
+<td align="center"><sub><b>/nexus-help</b>, drawn in the transcript</sub></td>
 </tr>
 </table>
 
-<div align="center"><img src="mod/swarm-ui/docs/screenshots/nexus-about.png" alt="/nexus-about" width="100%"><br><sub><b>/nexus-about</b>: a first-run guide with a three-step quick start</sub></div>
+<br>
+
+## Model modes
+
+| Mode | Lead | Advisor |
+|---|---|---|
+| **Balanced** *(default)* | Sonnet 5.5 · high | Opus 5.5 |
+| **Deep Engineering** | Opus 5.5 · xhigh | Fable 5.1 |
+| **Maximum Reasoning** | Fable 5.1 · max | Fable 5.1 |
+
+`/nexus-mode` applies to this session only. NEXUS may suggest a stronger mode before a hard prompt, but **never switches without your yes**. Fable bills to usage credits. Claude Code changes the advisor only on relaunch, so when a mode needs a different advisor NEXUS prints a one-line relaunch command for that session; your saved defaults are never edited. [Details →](mod/swarm-ui/docs/dashboard.md#model-modes-in-detail)
 
 <br>
 
@@ -131,135 +138,33 @@ Click the dashboard (or press `ctrl+x tab`) and press `1`–`9`, or type `/nexus
 
 | Command | What it does |
 |---|---|
-| `/nexus` | open the dashboard · `close` to close it |
-| `/nexus layout auto\|full\|compact\|minimal` | switch layouts (auto picks by width) |
-| `/nexus settings [key value]` | open settings, or change one |
-| `/nexus width max\|40-200\|wider\|narrower` | pane width (a width you drag by hand wins) |
-| `/nexus agents` · `/nexus inspect <n\|label>` | list agents · open one |
+| `/nexus` | open the dashboard (`close`, `layout`, `width`, `settings`, `agents`, `inspect`) |
+| `/nexus-mode` | `balanced` · `deep` · `max` · `default` · `status` |
+| `/nexus-jev` | `status` · `active` · `observe` · `off` · `calibrate` |
 | `/nexus usage` | context, cost estimate, plan usage, tokens by model |
-| `/nexus-mode [balanced\|deep\|max\|default\|status]` | reasoning mode for this session |
-| `/nexus-jev [status\|active\|observe\|off\|calibrate]` | Jev routing |
-| `/nexus cache [on\|off]` | Cache Guard |
+| `/nexus cache` | Cache Guard status · `on` · `off` |
 | `/nexus doctor` | check the install and integrations |
-| `/nexus-help` · `/nexus-about` | reference · introduction |
+| `/nexus-help` · `/nexus-about` | every command and key · introduction |
 
 **Keys, with the dashboard focused:** `1`–`9` inspect · `s` settings · `b` back · `ctrl+x ←/→` resize · `ctrl+x x` close · `esc` back to the prompt.
 
-<sub>Upgrading from the Swarm names? `/swarm`, `/swarm-mode` and `/swarm-jev` still work for now and point you to the new command. Your preferences carry over.</sub>
+<sub>The old `/swarm`, `/swarm-mode` and `/swarm-jev` still work and point to the new names. [Full reference →](mod/swarm-ui/docs/dashboard.md#every-command)</sub>
 
 <br>
 
-## Model modes
+## Good to know
 
-| Mode | Lead | Advisor | When |
-|---|---|---|---|
-| **Balanced** *(default)* | Sonnet 5.5 · high | Opus 5.5 | everyday work |
-| **Deep Engineering** | Opus 5.5 · xhigh | Fable 5.1 | refactors, tricky bugs, architecture |
-| **Maximum Reasoning** | Fable 5.1 · max | Fable 5.1 | the hardest problems |
-
-`/nexus-mode` switches the lead for this session only. Before a hard-looking prompt, NEXUS can suggest a stronger mode in a dialog, and **it never switches without your yes**. Fable bills to usage credits.
-
-An advisor must rank at least as high as the lead, and Claude Code only lets an advisor change by relaunching the conversation. So when a mode needs a different advisor, NEXUS prints a one-line relaunch command that applies just to that session. Your saved defaults are never edited.
+- **Cost:** the session figure is Claude Code's total at API prices; on a subscription it's an estimate, not a charge. Anything not reported reads `N/A`. [Telemetry →](mod/swarm-ui/docs/telemetry.md)
+- **Cache Guard** is off by default. Each beat costs a little and only pays off if you come back. [Cache Guard →](mod/swarm-ui/docs/cache-guard.md)
+- **Privacy:** your Claude Code settings are never edited. Jev is the only third-party service NEXUS calls, only with your key, and it receives just tool names, file basenames and error kinds. [Jev →](mod/swarm-ui/docs/jev.md)
+- **Limits:** the advisor appears only once its request ends; its tokens and cost, and per-agent cost, aren't reported to plugins (shown as `N/A`). The mod API is early access. [Compatibility →](mod/swarm-ui/docs/compatibility.md)
+- **Credits:** Cache Guard draws inspiration from [Cachebeat](https://github.com/ARahim3/cachebeat) by Abdur Rahim (@ARahim3); no code is reused and no endorsement is implied. [Acknowledgments →](ACKNOWLEDGMENTS.md)
 
 <br>
 
-## What the numbers mean
+## Docs
 
-| On screen | Meaning | Source |
-|---|---|---|
-| `context 53k / 1.0M · 947k left · 5%` | how full the lead's context window is now | Claude Code's status-line figures |
-| `session $0.11 API est.` | this session at API prices; on a subscription, an estimate, not a charge | Claude Code's `/cost` ledger |
-| `5h ███░░ 17%` · `7d █░░░ 9%` | your plan's rate-limit windows, with local reset times | the rate-limit windows Claude Code receives |
-| tokens by model | each request counted once, lead and agents apart | Claude Code's per-request usage |
-
-Your plan name and a Fable weekly window appear only if Claude Code reports them; nothing is guessed. Plan figures go grey and say **stale** after 15 minutes without a response.
-
-<br>
-
-## Jev
-
-[TypeSafe](https://typesafe.ai) Jev answers small routing questions about the lead's next step: which file, which tool, retry or stop. It's **optional and observe-only by default**.
-
-`/nexus-jev active` first runs six calibration cases. After that, and only for the lead's own read-only `Read`/`LSP` calls, Jev may re-run a failed read once or attach an optional "next file" note, and only when it's sure (p ≥ 0.85 and confidence ≥ 0.6). It never touches shell commands, edits, permissions or subagents.
-
-<details>
-<summary>Setting the key</summary>
-
-Export `TYPESAFE_API_KEY`, or on macOS store it in the Keychain:
-```sh
-security add-generic-password -s claude-swarm-typesafe -a "$USER" -w
-```
-NEXUS holds it in memory only; it's never drawn or logged. Only tool names, file basenames and error *kinds* are ever sent to Jev.
-</details>
-
-<br>
-
-## Cache Guard
-
-Claude Code's prompt cache expires after you've been idle a while, and the next message pays to re-read the whole conversation. **Cache Guard** (off by default) sends a small, invisible beat after a set number of idle minutes to keep that cache warm.
-
-- **How a beat works:** it's a Claude Code model fork. A fork adds no conversation turn or transcript entry, has every tool denied, and is unseen by NEXUS's own hooks.
-- **When it won't beat:** never while the lead works, an agent runs or a permission dialog waits.
-- **When it stops itself:** after its hours cap, beat count or budget, or once idle time has passed the cache's lifetime.
-- **It doesn't assume the cache lasts an hour:** it waits for evidence, or for your `trustTtl` setting.
-
-| You come back… | without Cache Guard | with Cache Guard |
-|---|---|---|
-| before the cache expires | ~0.1× (cache read) | ~0.1× (no beat needed) |
-| after it expires | ~2× (rebuild) | ~0.1× per beat, then ~0.1× |
-| never | 0 | every beat was extra |
-
-<sub>Multiples of the conversation's input price, per Anthropic's cache pricing. NEXUS reports what beats cost and shows savings as N/A, because it can't know whether you'll return.</sub>
-
-<sub>Cache Guard draws inspiration from <a href="https://github.com/ARahim3/cachebeat">Cachebeat</a> by <a href="https://github.com/ARahim3">Abdur Rahim (@ARahim3)</a>. It's written independently; no Cachebeat code is reused and no endorsement is implied. See <a href="ACKNOWLEDGMENTS.md">ACKNOWLEDGMENTS</a>.</sub>
-
-<br>
-
-## FAQ
-
-<details>
-<summary><b>The dashboard doesn't appear.</b></summary>
-
-Use the fullscreen TUI and type `/nexus`. `/nexus doctor` checks the setup. On narrow terminals, use `/nexus layout compact` or `minimal`.
-</details>
-
-<details>
-<summary><b>Why can't the pane get wider?</b></summary>
-
-Claude Code caps a docked pane at 45% of the terminal and keeps at least 60 columns for the conversation. NEXUS asks for the maximum. A wider window or a smaller font gives it more room.
-</details>
-
-<details>
-<summary><b>Why does an agent card say Sonnet instead of Haiku?</b></summary>
-
-That's one of Claude Code's built-in agents (such as Explore), not one of your Haiku agents. NEXUS marks it *fallback* and shows the model it actually ran on.
-</details>
-
-<details>
-<summary><b>Does NEXUS change my Claude Code settings?</b></summary>
-
-No. Its preferences live in the plugin's own store, and modes apply to the current session only.
-</details>
-
-<details>
-<summary><b>Uninstall</b></summary>
-
-```sh
-claude plugin uninstall swarm-ui@claude-swarm
-claude plugin marketplace remove claude-swarm
-```
-If you stored a Jev key: `security delete-generic-password -s claude-swarm-typesafe`.
-</details>
-
-<details>
-<summary><b>Known limitations</b></summary>
-
-- **Advisor:** visible only once the request it ran in ends. Its tokens and cost aren't reported to plugins.
-- **Per-agent cost:** shown as N/A, because Claude Code prices only the session as a whole.
-- **Jev routing:** covers only the lead's read-only `Read`/`LSP` calls.
-- **Jev key in the Keychain:** macOS only; elsewhere use the environment variable.
-- **Updates:** the mod API is early access. After a Claude Code update, run `claude plugin validate mod/swarm-ui && claude plugin test mod/swarm-ui`.
-</details>
+[Dashboard tour](mod/swarm-ui/docs/dashboard.md) · [Telemetry](mod/swarm-ui/docs/telemetry.md) · [Jev](mod/swarm-ui/docs/jev.md) · [Cache Guard](mod/swarm-ui/docs/cache-guard.md) · [Compatibility](mod/swarm-ui/docs/compatibility.md) · [Troubleshooting & uninstall](mod/swarm-ui/docs/troubleshooting.md)
 
 <br>
 
