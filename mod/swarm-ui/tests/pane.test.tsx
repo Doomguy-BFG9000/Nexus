@@ -22,6 +22,10 @@ function engine(on: On) {
   mock.clock(on)
   mock.env(on, { HOME: '/home/test' })
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
+  on('session.id', () => ({ value: 'sess-1' }))
+  on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
+  on('config.list', () => ({ value: [] }))
+  on('process.run', () => ({ value: { exitCode: 44, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.read', () => {
     throw new Error('no agent definition here')
   })
@@ -36,7 +40,8 @@ test('the full layout draws every region, with N/A for what was never reported',
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount(pane(90))
-  expect(await ui.find({ type: 'Text', text: /advisor · on call/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /◇ on call/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Awaiting consultation\./ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /main session/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /fork layer/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /review \+ verify/ })).toBeTruthy()

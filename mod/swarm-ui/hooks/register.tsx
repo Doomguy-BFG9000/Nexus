@@ -43,8 +43,8 @@ export const lead = atom(
 
 export const advisor = atom(
   { plugin: 'swarm-ui', key: 'advisor' } as const,
-  { calls: 0, lastAt: null, lastMs: null, contextAtCall: null } as Advisor,
-  { shape: 'advisor-1' },
+  { calls: 0, lastAt: null, lastMs: null, contextAtCall: null, history: [] } as Advisor,
+  { shape: 'advisor-2' },
 )
 
 export const agents = atom(
@@ -745,7 +745,13 @@ export const register: Register = (on, options) => {
       if (use.name !== 'advisor') continue
       const ms = use.endedAt === undefined ? null : use.endedAt - use.startedAt
       const before = (await read($, lead)).contextTokens
-      await update($, advisor, a => ({ calls: a.calls + 1, lastAt: use.startedAt, lastMs: ms, contextAtCall: before }))
+      await update($, advisor, a => ({
+        calls: a.calls + 1,
+        lastAt: use.startedAt,
+        lastMs: ms,
+        contextAtCall: before,
+        history: [...a.history, { at: use.startedAt, ms, context: before }].slice(-5),
+      }))
       await addFx($, 'advisor', use.id)
       await addLog($, {
         who: 'advisor',

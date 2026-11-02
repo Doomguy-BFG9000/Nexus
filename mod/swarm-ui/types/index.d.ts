@@ -27,6 +27,8 @@ export type Advisor = {
   lastMs: number | null
   /** The lead's context size when the advisor was last called (what it read). */
   contextAtCall: number | null
+  /** The latest consultations, newest last: when, how long, the lead's context then. */
+  history: { at: number; ms: number | null; context: number | null }[]
 }
 
 export type SwarmAgent = {

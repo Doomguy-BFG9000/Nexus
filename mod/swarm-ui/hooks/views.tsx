@@ -1,7 +1,7 @@
 import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent } from '../types'
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
 import { JEV } from './jev'
-import { MODES, family, launchedMode } from './modes'
+import { MODES, family, launchedMode, modelId } from './modes'
 
 // The elements come from the surface's table ($.ui.resolve(e)); views take
 // them as an argument so they stay plain functions of the state.
@@ -103,7 +103,7 @@ function haikuModel(s: Snapshot): string {
 
 /** The advisor the session runs with, as settings and --settings say. */
 function advisorLabel(s: Snapshot): string {
-  return s.mode.sessionAdvisor ? modelLabel(s.mode.sessionAdvisor) : 'off'
+  return s.mode.sessionAdvisor ? modelLabel(modelId(s.mode.sessionAdvisor)) : 'off'
 }
 
 function modeName(s: Snapshot): string {
@@ -160,7 +160,14 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
   const { Box, Text } = el
   const a = s.advisor
   const p = phase(s, 'advisor')
-  const line = (t: string) => <Text color={C.dim}>┆ <Text color={C.fg}>{t}</Text></Text>
+  const isOff = !s.mode.sessionAdvisor
+  const row = (label: string, value: string, color: string = C.purple) => (
+    <Text>
+      <Text color={C.dim}>{pad(label, 12)}</Text>
+      <Text color={color}>{value}</Text>
+    </Text>
+  )
+  const earlier = a.history.slice(0, -1).reverse().slice(0, 3)
   return (
     <Box
       flexDirection="column"
@@ -170,37 +177,34 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
       paddingX={1}
     >
       <Box justifyContent="center"><Text bold color={p === null ? C.purple : C.purpleHi}>{advisorLabel(s).toUpperCase()}</Text></Box>
-      <Box justifyContent="center"><Text color={C.purple}>advisor · {p === null ? 'on call' : 'advising'}</Text></Box>
-      <Text color={C.purple}>◇ <Text color={C.fg}>before a plan</Text></Text>
-      {line('reads the whole')}
-      {line('session, every')}
-      {line('tool call and')}
-      {line('every result')}
-      <Text color={C.dim}>┆</Text>
-      {line('last advice:')}
-      <Text color={C.dim}>┆   <Text color={C.fg}>{a.lastAt === null ? 'N/A' : `${elapsed(s.now - a.lastAt)} ago`}</Text></Text>
-      <Text color={C.dim}>┆</Text>
-      <Text color={C.dim}>┆ <Text color={C.fg}>{pad('calls', 15)}</Text><Text color={C.purple}>{a.calls}</Text></Text>
-      {line('context read')}
-      <Text color={C.dim}>┆   <Text color={C.purple}>{compact(a.contextAtCall)}</Text></Text>
-      <Text color={C.dim}>┆</Text>
-      {line('silent on every')}
-      {line('routine turn')}
-      <Text color={C.dim}>┆</Text>
-      {p !== null ? (
-        <Text backgroundColor={C.purpleBg} color={C.purpleHi} bold>
-          {pad(`◆ advice in ${a.lastMs === null ? '' : elapsed(a.lastMs)}`, ADVISOR_W - 4)}
-        </Text>
+      <Box justifyContent="center">
+        <Text color={C.purple}>{isOff ? '○ no advisor' : p === null ? '◇ on call' : '◆ consulted'}</Text>
+      </Box>
+      <Text> </Text>
+      {a.lastAt === null ? (
+        <Box justifyContent="center"><Text color={C.dim}>{isOff ? 'advisor off' : 'Awaiting consultation.'}</Text></Box>
       ) : (
-        <Text color={C.dim}>┆</Text>
+        <Box flexDirection="column">
+          <Text color={C.dim}>last consultation</Text>
+          {p !== null ? (
+            <Text backgroundColor={C.purpleBg} color={C.purpleHi} bold>{pad('reported just now', ADVISOR_W - 4)}</Text>
+          ) : (
+            <Text color={C.fg}>{elapsed(s.now - a.lastAt)} ago</Text>
+          )}
+          <Text> </Text>
+          {row('calls', String(a.calls))}
+          {row('context', compact(a.contextAtCall))}
+          {row('duration', a.lastMs === null ? 'N/A' : elapsed(a.lastMs))}
+          {row('cost', 'N/A', C.dim)}
+          {earlier.length > 0 && <Text> </Text>}
+          {earlier.length > 0 && <Text color={C.dim}>earlier</Text>}
+          {earlier.map(call => (
+            <Text color={C.dim}>
+              {pad(`${elapsed(s.now - call.at)} ago`, 10)} {pad(call.ms === null ? '' : elapsed(call.ms), 5)} {compact(call.context)}
+            </Text>
+          ))}
+        </Box>
       )}
-      <Text color={C.dim}>┆</Text>
-      {line('never writes')}
-      {line('code itself.')}
-      {line(`${family(s.lead.model) ?? 'the lead'} applies`)}
-      {line('the advice.')}
-      <Text color={C.dim}>┆</Text>
-      <Text color={C.purple}>◇ <Text color={C.fg}>before done</Text></Text>
     </Box>
   )
 }
