@@ -14,9 +14,9 @@
 
 <div align="center">
 
-<img src="mod/nexus/docs/media/nexus-demo.gif" alt="Real NEXUS session with parallel agents and an advisor consultation" width="100%">
+<img src="mod/nexus/docs/media/nexus-trailer.gif" alt="NEXUS launch trailer: Sonnet, JEV, Haiku and Opus in one dashboard, from a real session" width="100%">
 
-<sub>[Watch in 1080p](mod/nexus/docs/media/nexus-demo-1080p.mp4) · Real session footage · [Launch trailer](https://github.com/muhzain05/Nexus/releases/download/v0.6.0/NEXUS.mp4) · [v0.6.0 release](https://github.com/muhzain05/Nexus/releases/tag/v0.6.0)</sub>
+<sub>Launch trailer · [Download MP4 (1080p, with sound)](https://github.com/muhzain05/Nexus/releases/download/v0.6.0/NEXUS.mp4) · [Raw session demo](mod/nexus/docs/media/nexus-demo.gif) · [v0.6.0 release](https://github.com/muhzain05/Nexus/releases/tag/v0.6.0)</sub>
 
 </div>
 
