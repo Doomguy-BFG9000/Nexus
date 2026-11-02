@@ -1,5 +1,11 @@
 # Changelog (swarm-ui)
 
+## 0.4.1 (2026-11-02): NEXUS polish
+- NEXUS branding in the pane: a spaced wordmark header with the mode and running models, with room above it. Command and plugin ids are unchanged.
+- Haiku cards are fixed-size (7 rows). The orbit sits in the top-right corner as a one-row edge-on orbit, the status row is always last, and text is cut with `…`. The floating orbit row above the cards is gone.
+- The advisor panel is grouped into bands (model and status, orbit, stats with placeholders, pair check and recent calls) and ends with its content. At rest, the orbit shows a dim constellation instead of a single glyph.
+- The lead orbit is narrower; the Jev header's decision arc is one row.
+
 ## 0.4.0 (2026-11-02)
 - Advisor sidebar shows data only: model, last consultation, calls, context, duration, short history; "Awaiting consultation." when empty.
 - Agent inspection: each instance has its own label (`search#2`), fallback agents are marked, and an agent's lifecycle, tokens, files, recent activity and result can be opened. Use `/swarm agents`, `/swarm inspect`, or hotkeys 1–9 in the focused pane.

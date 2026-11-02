@@ -1,10 +1,16 @@
-# Claude Swarm (`swarm-ui`)
+# NEXUS
 
-Claude Swarm turns Claude Code's own terminal into a multi-agent command center: a Sonnet lead, Haiku subagents, an Opus or Fable advisor and an optional Jev router, drawn as a live diagram beside your conversation. It is a native Claude Code plugin built on the supported mod API. There is no wrapper, no second terminal and no patched binary.
+**NEXUS** (the `swarm-ui` plugin) turns Claude Code's own terminal into a multi-agent command center: a Sonnet lead, Haiku subagents, an Opus or Fable advisor and an optional Jev router, drawn as a live diagram beside your conversation. It is a native Claude Code plugin built on the supported mod API. There is no wrapper, no second terminal and no patched binary.
 
 Every number on the dashboard comes from Claude Code itself. Anything Claude Code doesn't report reads `N/A`.
 
-![Swarm dashboard: advisor sidebar, lead, Jev, Haiku cards with orbits, usage](docs/screenshots/dashboard.png)
+![NEXUS dashboard](docs/screenshots/nexus-dashboard.png)
+
+| Advisor panel | Haiku cards |
+|---|---|
+| ![Advisor panel after a reported consultation](docs/screenshots/nexus-advisor.png) | ![Haiku cards with corner orbits](docs/screenshots/nexus-cards.png) |
+
+The commands and plugin id keep the earlier `swarm` names (`/swarm`, `/swarm-mode`, `swarm-ui@claude-swarm`), so existing installs and settings keep working.
 
 ## Requirements
 - Claude Code **2.1.316** (tested). The mod API is early access; see [Updates](#updates-and-compatibility).
@@ -45,7 +51,7 @@ Read-only test, do not edit anything. Run swarm-search and swarm-grep in paralle
 - **Lead:** the model that actually answered (from the response, not the configuration), its effort, and whether it is working, idle or waiting on a permission dialog.
 - **Telemetry line:** `context 97k / 200k · 103k left · 49%` are the main thread's figures as Claude Code's status line reports them. `session $0.82 API est.` is what Claude Code's `/cost` ledger totals at API prices; it isn't a subscription charge.
 - **Jev:** the latest answers as bars: probability, sharp or split, and confidence. Tool agreement, spend and routing state appear underneath.
-- **Haiku cards:** one per agent instance (`search#1`, `search#2`, ...), showing model, task, turns and state (running, done, failed or cancelled). Agent types outside the configured swarm are marked `fallback`.
+- **Haiku cards:** one fixed-size card per agent instance (`search#1`, `search#2`, ...). Each card shows its name with a small orbit in the top-right corner, then the model, task, turns, and the state (running, done, failed or cancelled) on its bottom row. Long text is cut with `…`. Agent types outside the configured swarm are marked `fallback` and get a rounded border.
 - **Cache Guard:** under the back-to-lead box (see below).
 - **USAGE:** see below.
 

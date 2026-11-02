@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DUAL, coreOrbit, decisionOrbit, dualOrbit, plain, refreshOrbit, swarmOrbit } from '../hooks/orbit'
+import { DUAL, MINI_W, coreOrbit, decisionMini, decisionOrbit, dualOrbit, miniOrbit, plain, refreshOrbit, swarmOrbit } from '../hooks/orbit'
 
 const glyphs = (rows: string[]) => rows.join('\n').replace(/\s/g, '')
 /** Cells (col,row) that hold a bright satellite. */
@@ -13,7 +13,8 @@ function satellites(rows: string[]): [number, number][] {
 for (const variant of ['tight', 'wide'] as const) {
   test(`dual orbit (${variant}): still form, real revolution, mirrored satellites, seamless cycle`, async () => {
     const v = DUAL[variant]
-    expect(glyphs(plain(dualOrbit(variant, null)))).toBe('◇')
+    // At rest: core, two parked satellites and the faint path; nothing bright.
+    expect(glyphs(plain(dualOrbit(variant, null))).replace(/·/g, '')).toBe('∘◇∘')
     // Revolving phase: two satellites, mirrored left/right about the core, moving frame to frame.
     const frames = [0.35, 0.45, 0.55, 0.65].map(c => plain(dualOrbit(variant, c * v.cycleMs)))
     for (const f of frames) {
@@ -40,7 +41,7 @@ for (const variant of ['tight', 'wide'] as const) {
 
 test('the lead core orbit turns while working and holds still otherwise', async () => {
   expect(plain(coreOrbit(0))).not.toEqual(plain(coreOrbit(300)))
-  expect(glyphs(plain(coreOrbit(null))).replace(/•/g, '')).toBe('●')
+  expect(glyphs(plain(coreOrbit(null))).replace(/∙/g, '')).toBe('●')
   expect(plain(coreOrbit(null))).toEqual(plain(coreOrbit(null)))
 })
 
@@ -79,4 +80,27 @@ test('cache refresh orbit sweeps only while refreshing', async () => {
   expect(refreshOrbit('REFRESHING', 130, true)).toBe('◌')
   expect(refreshOrbit('ARMED', 130, false)).toBe(refreshOrbit('ARMED', 999, false))
   expect(refreshOrbit('OFF', 0, false)).toBe('·')
+})
+
+test('the card-corner orbit fits five cells in every state and moves only while running', async () => {
+  const states = [
+    { state: 'idle' }, { state: 'failed' }, { state: 'cancelled' }, { state: 'done', sinceEnd: 100 }, { state: 'done', sinceEnd: 5000 },
+    { state: 'running', sinceStart: 0 }, { state: 'running', sinceStart: 900 },
+  ] as const
+  for (const p of states) {
+    const rows = plain(miniOrbit(p as any, false))
+    expect(rows.length).toBe(1)
+    expect(rows[0]!.length).toBe(MINI_W)
+  }
+  const running = [700, 820, 940, 1060, 1180, 1300].map(ms => plain(miniOrbit({ state: 'running', sinceStart: ms }, false))[0])
+  expect(new Set(running).size).toBeGreaterThanOrEqual(3)
+  expect(plain(miniOrbit({ state: 'running', sinceStart: 700 }, true))).toEqual(plain(miniOrbit({ state: 'running', sinceStart: 9999 }, true)))
+  expect(plain(miniOrbit({ state: 'done', sinceEnd: 5000 }, false))[0]!.trim()).toBe('◉')
+})
+
+test('the one-row Jev arc crosses, then lands on the outcome, in five cells', async () => {
+  for (const ms of [0, 200, 400, 900]) expect(plain(decisionMini('accepted', ms, false))[0]!.length).toBe(MINI_W)
+  expect(plain(decisionMini('accepted', 100, false))).not.toEqual(plain(decisionMini('accepted', 450, false)))
+  expect(plain(decisionMini('fallback', 900, false))[0]!.trim()).toBe('↩')
+  expect(plain(decisionMini(null, null, false))[0]!.trim()).toBe('·')
 })

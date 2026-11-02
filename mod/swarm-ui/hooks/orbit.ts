@@ -60,15 +60,15 @@ const cyc = (ms: number, period: number) => (((ms % period) + period) % period) 
 // ---- Sonnet / lead: Core Orbit ----------------------------------------------
 /** Four satellites round an orange core; the ring breathes out and regroups. */
 export function coreOrbit(ms: number | null): Sprite {
-  const g = new Grid(9, 3)
+  const g = new Grid(7, 3)
   g.put(g.cx, g.cy, '●', 'core')
   const still = ms === null
   const a0 = still ? Math.PI / 4 : TAU * cyc(ms, 1600)
   const r = still ? 1 : 0.75 + 0.35 * ease(0.5 + 0.5 * Math.sin(TAU * cyc(ms, 2400)))
   for (let k = 0; k < 4; k++) {
     const a = a0 + (k * TAU) / 4
-    if (!still) g.polar(r, a - 0.5, '·', 'trail')
-    g.polar(r, a, '•', 'sat')
+    if (!still) g.polar(r * 0.9, a - 0.5, '·', 'faint')
+    g.polar(r * 0.9, a, '∙', 'sat')
   }
   return g.sprite()
 }
@@ -130,6 +130,45 @@ export function swarmOrbit(p: AgentPhase, isStill: boolean): Sprite {
   return g.sprite()
 }
 
+/** Five cells wide: in the corner of an agent card. */
+export const MINI_W = 5
+
+/**
+ * The Haiku orbit seen edge-on, in one row: two satellites swing past the
+ * core, bright while in front of it, dim behind. Still glyphs for every state
+ * but running; a running agent's phase comes from its real start time.
+ */
+export function miniOrbit(p: AgentPhase, isStill: boolean): Sprite {
+  const g = new Grid(MINI_W, 1)
+  const mid = (MINI_W - 1) / 2
+  if (p.state === 'idle') g.put(mid, 0, '·', 'faint')
+  else if (p.state === 'failed') g.put(mid, 0, '◌', 'core')
+  else if (p.state === 'cancelled') g.put(mid, 0, '◌', 'faint')
+  else if (p.state === 'done') {
+    g.put(mid, 0, '◉', 'core')
+    // The final outward pulse, once.
+    if (!isStill && p.sinceEnd < 600) {
+      const d = p.sinceEnd < 300 ? 1 : 2
+      g.put(mid - d, 0, '·', 'sat')
+      g.put(mid + d, 0, '·', 'sat')
+    }
+  } else if (isStill) {
+    g.put(mid, 0, '●', 'core')
+    g.put(mid - 2, 0, '∙', 'trail')
+    g.put(mid + 2, 0, '∙', 'trail')
+  } else {
+    const grow = Math.min(1, p.sinceStart / 600)
+    g.put(mid, 0, grow < 0.5 ? '∘' : '●', 'core')
+    const a = TAU * cyc(p.sinceStart, 1400)
+    for (const off of [0, Math.PI]) {
+      const x = mid + 2 * grow * Math.cos(a + off)
+      const isFront = Math.sin(a + off) > 0
+      g.put(x, 0, isFront ? '•' : '·', isFront ? 'sat' : 'faint')
+    }
+  }
+  return g.sprite()
+}
+
 // ---- Opus / Fable advisor: Dual-Orbit Resonance ------------------------------
 export type DualVariant = 'tight' | 'wide'
 
@@ -148,6 +187,10 @@ export function dualOrbit(variant: DualVariant, ms: number | null): Sprite {
   const v = DUAL[variant]
   const g = new Grid(v.w, v.h)
   if (ms === null) {
+    // At rest: the faint orbit path, the core, two satellites parked opposite.
+    for (let k = 0; k < 16; k++) g.polar(v.rMax, (k * TAU) / 16, '·', 'faint')
+    g.polar(v.rMax, Math.PI, '∘', 'trail')
+    g.polar(v.rMax, 0, '∘', 'trail')
     g.put(g.cx, g.cy, '◇', 'core')
     return g.sprite()
   }
@@ -220,6 +263,25 @@ export function decisionOrbit(outcome: JevOutcome | null, ms: number | null, isS
   const a = Math.PI + Math.PI * ease(t)
   g.polar(1, a - 0.5, '·', 'trail')
   g.polar(1, a, '●', 'sat')
+  return g.sprite()
+}
+
+/** The decision arc in one row (for the Jev header): a dot crosses, then the outcome's mark. */
+export function decisionMini(outcome: JevOutcome | null, ms: number | null, isStill: boolean): Sprite {
+  const g = new Grid(MINI_W, 1)
+  const mid = (MINI_W - 1) / 2
+  if (outcome === null || ms === null) {
+    g.put(mid, 0, '·', 'faint')
+    return g.sprite()
+  }
+  const t = isStill ? 1 : Math.min(1, ms / 700)
+  if (t >= 1) {
+    g.put(mid, 0, outcome === 'accepted' ? '◆' : outcome === 'fallback' ? '↩' : '·', outcome === 'observed' ? 'faint' : 'core')
+    return g.sprite()
+  }
+  const x = (MINI_W - 1) * ease(t)
+  g.put(x - 1, 0, '·', 'trail')
+  g.put(x, 0, '●', 'sat')
   return g.sprite()
 }
 

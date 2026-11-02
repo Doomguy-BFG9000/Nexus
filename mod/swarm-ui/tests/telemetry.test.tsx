@@ -127,7 +127,7 @@ test('nothing reported: N/A, never zero', async ($, on) => {
   await start($)
   const all = await texts($)
   expect(all).toMatch(/context N\/A/)
-  expect(all).toMatch(/no limits reported yet/)
+  expect(all).toMatch(/no limits yet/)
   expect(all).toMatch(/session \n?N\/A/)
 })
 

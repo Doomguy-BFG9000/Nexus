@@ -91,14 +91,14 @@ test('an advisor call pulses the advisor, then the pane returns to on call', asy
   await start($)
   await stepWithAdvisor($)
   const ui = await $.ui.mount(pane(90))
-  expect(await ui.find({ type: 'Text', text: /◆ consulted/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /◆ reported/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /reported just now/ })).toBeTruthy()
   await ui.unmount()
   await clock.advance(7000) // two cycles of the wide Dual-Orbit
   const after = await $.ui.mount(pane(90))
   expect(await after.find({ type: 'Text', text: /◇ on call/ })).toBeTruthy()
-  expect(await after.find({ type: 'Text', text: /consulted|reported just now/ })).toBeFalsy()
-  expect(await after.find({ type: 'Text', text: /^7s ago$/ })).toBeTruthy()
+  expect(await after.find({ type: 'Text', text: /◆ reported|reported just now/ })).toBeFalsy()
+  expect(await after.find({ type: 'Text', text: /last 7s ago/ })).toBeTruthy()
   await after.unmount()
 })
 

@@ -61,8 +61,9 @@ test('consultations are counted with duration, context and a short history; cost
   expect(all).toMatch(/duration\s*\n?4s/)
   expect(all).toMatch(/context\s*\n?41k/)
   expect(all).toMatch(/cost\s*\n?N\/A/)
-  expect(all).toMatch(/earlier/)
-  expect(all).not.toMatch(/consulted|reported just now/) // nothing stale after the pulse
+  expect(all).toMatch(/recent/)
+  expect(all).toMatch(/pair +✓ sonnet → opus$/m)
+  expect(all).not.toMatch(/◆ reported|reported just now/) // nothing stale after the pulse
 })
 
 test('the label follows the session advisor: Opus to Fable', async ($, on) => {
@@ -79,6 +80,6 @@ test('no advisor configured: says so', async ($, on) => {
   engine(on, () => null)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const all = await text($)
-  expect(all).toMatch(/○ no advisor/)
-  expect(all).toMatch(/advisor off/)
+  expect(all).toMatch(/○ off/)
+  expect(all).toMatch(/no advisor this session/)
 })

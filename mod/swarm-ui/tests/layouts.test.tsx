@@ -119,3 +119,12 @@ test('the settings view lists values in the pane', async ($, on) => {
   expect(all).toMatch(/plugin store only/)
   expect(all).toMatch(/cacheGuard\.idleMin/)
 })
+
+test('NEXUS header: the wordmark and running models; the old banner is gone', async ($, on) => {
+  engine(on)
+  await start($)
+  const all = await texts($, 120)
+  expect(all).toMatch(/N E X U S/)
+  expect(all).toMatch(/sonnet 5\.5 lead/)
+  expect(all).not.toMatch(/CLAUDE CODE SWARM|BUILDS|SWARMS/)
+})

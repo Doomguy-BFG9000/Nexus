@@ -61,7 +61,7 @@ test('overlapping instances of one type get their own identity; a fallback agent
   const all = await texts($)
   expect(all).toMatch(/search#1/)
   expect(all).toMatch(/search#2/)
-  expect(all).toMatch(/fallback · sonnet 5\.5/)
+  expect(all).toMatch(/sonnet 5\.5 · fa(llback|…)/) // cut to the card's width
   const list = (await run($, 'agents')).text
   expect(list).toMatch(/1  search#1 +haiku 5\.5 +● running/)
   expect(list).toMatch(/3  general-purpose#1 +sonnet 5\.5 +● running +\[fallback\] writes a summary/)
@@ -139,4 +139,15 @@ test('an answer handed back through a tool call becomes the result; the working 
   const out = (await ($ as any).command.run({ command: 'swarm', args: 'inspect grep#1' })).text
   expect(out).toMatch(/x is defined in src\/x\.ts:12/)
   expect(out).toMatch(/files     \./)
+})
+
+test('cards keep their footprint: long labels and tasks are cut with an ellipsis, status is always the last row', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await spawn($, 'general-purpose', 'Audit: correctness of the whole cache layer and its tests', 'tu1')
+  const all = await texts($)
+  expect(all).toMatch(/general-pu…|general-p…/)
+  expect(all).toMatch(/Audit: corr[a-z]*…/)
+  expect(all).not.toMatch(/Audit: correctness of the whole cache layer/)
+  expect(all).toMatch(/● running 0s/)
 })

@@ -2,8 +2,8 @@ import type { Advisor, Fx, Guard, Jev, JevDecision, Lead, LogRow, Mode, SwarmAge
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
-import { MODES, family, launchedMode, modelId } from './modes'
-import { coreOrbit, decisionOrbit, dualOrbit, refreshOrbit, swarmOrbit } from './orbit'
+import { MODES, family, launchedMode, modelId, pairing } from './modes'
+import { MINI_W, coreOrbit, decisionMini, dualOrbit, miniOrbit, refreshOrbit } from './orbit'
 import type { AgentPhase, JevOutcome, Sprite, Tone } from './orbit'
 import { SETTINGS, prefValue } from './prefs'
 import type { Prefs } from './prefs'
@@ -169,6 +169,12 @@ function lastRoute(s: Snapshot): { outcome: JevOutcome | null; ms: number | null
   return { outcome: f.ref as JevOutcome, ms: s.now - f.at }
 }
 
+/** Cuts `text` to `n` cells, ending in … when it had to cut. */
+export function fit(text: string, n: number): string {
+  if (n <= 0) return ''
+  return text.length <= n ? text : `${text.slice(0, Math.max(0, n - 1))}…`
+}
+
 /** A dotted track; `dots` are positions 0..1 drawn bright in `color`. */
 function Track({ el, width, dots, color }: { el: El; width: number; dots: number[]; color: string }) {
   const { Text } = el
@@ -189,26 +195,24 @@ function Track({ el, width, dots, color }: { el: El; width: number; dots: number
 
 function Header({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
-  const lead = modelLabel(s.lead.model).toUpperCase()
-  const haiku = haikuModel(s).toUpperCase()
+  const swatch = (color: string, label: string) => (
+    <Text><Text color={color}>■ </Text><Text color={C.fg}>{label}</Text></Text>
+  )
   return (
-    <Box flexDirection="column" width={width}>
-      <Box justifyContent="center">
-        <Text bold color={C.fg}>CLAUDE CODE SWARM</Text>
-        <Text color={C.dim}> · </Text>
-        <Text bold color={C.orange}>{lead}</Text>
-        <Text bold color={C.fg}> BUILDS</Text>
-        <Text color={C.dim}> · </Text>
-        <Text bold color={C.blue}>{haiku}</Text>
-        <Text bold color={C.fg}> SWARMS</Text>
+    <Box flexDirection="column" width={width} marginTop={1}>
+      <Box justifyContent="space-between" paddingX={1}>
+        <Text>
+          <Text bold color={C.fg}>N E X U S</Text>
+          <Text color={C.dim}>   multi-agent command center</Text>
+        </Text>
+        <Text><Text color={C.amber}>◈ </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
       </Box>
-      <Text color={C.dim}>{'═'.repeat(width)}</Text>
-      <Box justifyContent="space-around">
-        <Text><Text color={C.orange}>■</Text><Text color={C.fg}> {modelLabel(s.lead.model)} · lead</Text></Text>
-        <Text><Text color={C.blue}>■</Text><Text color={C.fg}> {haikuModel(s)} · swarm</Text></Text>
-        <Text><Text color={C.green}>■</Text><Text color={C.fg}> jev · forks</Text></Text>
-        <Text><Text color={C.purple}>■</Text><Text color={C.fg}> {advisorLabel(s)} · advisor</Text></Text>
-        <Text><Text color={C.amber}>◈</Text><Text color={C.fg}> {modeName(s)}</Text></Text>
+      <Text color={C.dim}>{'─'.repeat(width)}</Text>
+      <Box justifyContent="space-between" paddingX={1}>
+        {swatch(C.orange, `${modelLabel(s.lead.model)} lead`)}
+        {swatch(C.blue, `${haikuModel(s)} swarm`)}
+        {swatch(C.purple, `${advisorLabel(s)} advisor`)}
+        {s.prefs.jev !== 'hidden' && swatch(C.green, 'jev')}
       </Box>
     </Box>
   )
@@ -223,25 +227,27 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
   const a = s.advisor
   const p = phase(s, 'advisor')
   const isOff = !s.mode.sessionAdvisor
-  const row = (label: string, value: string, color: string = C.purple) => (
-    <Text>
-      <Text color={C.dim}>{pad(label, 12)}</Text>
-      <Text color={color}>{value}</Text>
-    </Text>
+  const inner = ADVISOR_W - 4
+  const stat = (label: string, value: string, color: string = C.purple) => (
+    <Text><Text color={C.dim}>{pad(label, 10)}</Text><Text color={value === '—' ? C.dim : color}>{fit(value, inner - 10)}</Text></Text>
   )
-  const earlier = a.history.slice(0, -1).reverse().slice(0, 3)
+  const rule = <Text color="#3a3b4a">{'─'.repeat(inner)}</Text>
+  const pair = s.mode.sessionAdvisor && s.lead.model ? pairing(s.lead.model, s.mode.sessionAdvisor) : null
+  const recent = a.history.slice().reverse().slice(0, 4)
   return (
     <Box
       flexDirection="column"
       width={ADVISOR_W}
+      alignSelf="flex-start"
       borderStyle={p === null ? 'single' : 'double'}
       borderColor={isLit(s, p) ? C.purpleHi : C.purple}
       paddingX={1}
     >
-      <Box justifyContent="center"><Text bold color={p === null ? C.purple : C.purpleHi}>{advisorLabel(s).toUpperCase()}</Text></Box>
-      <Box justifyContent="center">
-        <Text color={C.purple}>{isOff ? '○ no advisor' : p === null ? '◇ on call' : '◆ consulted'}</Text>
+      <Box justifyContent="space-between">
+        <Text bold color={p === null ? C.purple : C.purpleHi}>{advisorLabel(s).toUpperCase()}</Text>
+        <Text color={C.purple}>{isOff ? '○ off' : p === null ? '◇ on call' : '◆ reported'}</Text>
       </Box>
+      {rule}
       {!isOff && (
         <Box justifyContent="center">
           <Orbit
@@ -251,29 +257,41 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
           />
         </Box>
       )}
-      {a.lastAt === null ? (
-        <Box justifyContent="center"><Text color={C.dim}>{isOff ? 'advisor off' : 'Awaiting consultation.'}</Text></Box>
+      <Box justifyContent="center">
+        {isOff ? (
+          <Text color={C.dim}>no advisor this session</Text>
+        ) : a.lastAt === null ? (
+          <Text color={C.dim}>Awaiting consultation.</Text>
+        ) : p !== null ? (
+          <Text backgroundColor={C.purpleBg} color={C.purpleHi} bold> reported just now </Text>
+        ) : (
+          <Text color={C.fg}>last {elapsed(s.now - a.lastAt)} ago</Text>
+        )}
+      </Box>
+      {rule}
+      {stat('calls', String(a.calls))}
+      {stat('duration', a.lastMs === null ? '—' : elapsed(a.lastMs))}
+      {stat('context', a.contextAtCall === null ? '—' : compact(a.contextAtCall))}
+      {stat('cost', 'N/A', C.dim)}
+      {rule}
+      {pair && (
+        <Text>
+          <Text color={C.dim}>{pad('pair', 6)}</Text>
+          <Text color={pair.ok ? C.green : C.amber}>{pair.ok ? '✓ ' : '✗ '}</Text>
+          <Text color={C.fg}>{fit(`${family(s.lead.model)} → ${family(s.mode.sessionAdvisor)}`, inner - 8)}</Text>
+        </Text>
+      )}
+      <Text color={C.dim}>recent</Text>
+      {recent.length === 0 ? (
+        <Text color="#3a3b4a">  no calls yet</Text>
       ) : (
-        <Box flexDirection="column">
-          <Text color={C.dim}>last consultation</Text>
-          {p !== null ? (
-            <Text backgroundColor={C.purpleBg} color={C.purpleHi} bold>{pad('reported just now', ADVISOR_W - 4)}</Text>
-          ) : (
-            <Text color={C.fg}>{elapsed(s.now - a.lastAt)} ago</Text>
-          )}
-          <Text> </Text>
-          {row('calls', String(a.calls))}
-          {row('context', compact(a.contextAtCall))}
-          {row('duration', a.lastMs === null ? 'N/A' : elapsed(a.lastMs))}
-          {row('cost', 'N/A', C.dim)}
-          {earlier.length > 0 && <Text> </Text>}
-          {earlier.length > 0 && <Text color={C.dim}>earlier</Text>}
-          {earlier.map(call => (
-            <Text color={C.dim}>
-              {pad(`${elapsed(s.now - call.at)} ago`, 10)} {pad(call.ms === null ? '' : elapsed(call.ms), 5)} {compact(call.context)}
-            </Text>
-          ))}
-        </Box>
+        recent.map(call => (
+          <Text color={C.dim}>
+            {pad(`${elapsed(s.now - call.at)} ago`, 10)}
+            <Text color={C.fg}>{pad(call.ms === null ? '' : elapsed(call.ms), 5)}</Text>
+            {compact(call.context)}
+          </Text>
+        ))
       )}
     </Box>
   )
@@ -368,10 +386,8 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
     <Box flexDirection="column" borderStyle="single" borderColor={isOff ? C.dim : C.green} paddingX={1} width={width}>
       <Box justifyContent="space-between">
         <Box gap={1}>
-          <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionOrbit(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
-          <Box flexDirection="column" justifyContent="center">
-            <Text><Text bold color={isOff ? C.dim : C.green}>JEV</Text><Text color={isOff ? C.dim : C.green}> · fork layer</Text></Text>
-          </Box>
+          <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionMini(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
+          <Text><Text bold color={isOff ? C.dim : C.green}>JEV</Text><Text color={isOff ? C.dim : C.green}> · fork layer</Text></Text>
         </Box>
         <Text>
           <Text color={C.dim}>decisions </Text>
@@ -485,7 +501,7 @@ export function UsageBox({ el, s, width }: { el: El; s: Snapshot; width: number 
         <Text><Text bold color={C.teal}>USAGE</Text><Text color={C.dim}> · {u.plan ?? 'plan not reported'}</Text></Text>
         <Text color={fresh.isStale ? C.amber : C.dim}>{fresh.isStale && u.readAt !== null ? `stale · ${fresh.label}` : fresh.label}</Text>
       </Box>
-      {limits.length === 0 && <Text color={C.dim}>no limits reported yet: they arrive with responses · /swarm usage</Text>}
+      {limits.length === 0 && <Text color={C.dim}>no limits yet · they arrive with responses</Text>}
       {limits.map(l => {
         const [full, rest] = bar(l.percentUsed / 100, barW)
         const color = fresh.isStale ? C.dim : TONE[tone(l.percentUsed)]
@@ -519,39 +535,50 @@ function JevLine({ el, s }: { el: El; s: Snapshot }) {
 
 function AgentBox({ el, a, s, width, slot }: { el: El; a: SwarmAgent | undefined; s: Snapshot; width: number; slot: string }) {
   const { Box, Text } = el
+  const inner = Math.max(6, width - 4)
+  // Fixed footprint: five single-line rows inside the border, whatever the content.
+  const card = (border: string, rows: any[], round = false, dimBorder = false) => (
+    <Box flexDirection="column" borderStyle={round ? 'round' : 'single'} borderColor={border} borderDimColor={dimBorder} paddingX={1} width={width} height={7}>
+      {rows}
+    </Box>
+  )
   if (!a) {
-    return (
-      <Box flexDirection="column" borderStyle="single" borderColor={C.blue} borderDimColor paddingX={1} width={width}>
-        <Box justifyContent="center"><Text bold color={C.dim}>{slot}</Text></Box>
-        <Box justifyContent="center"><Text color={C.dim}>idle</Text></Box>
-        <Text> </Text>
-        <Text> </Text>
-        <Text> </Text>
-      </Box>
-    )
+    return card(C.blue, [
+      <Box justifyContent="space-between"><Text bold color={C.dim}>{fit(slot, inner - MINI_W - 1)}</Text><Text color={C.dim}>{'  ·  '}</Text></Box>,
+      <Text color={C.dim}> </Text>,
+      <Text color={C.dim}>idle</Text>,
+      <Text> </Text>,
+      <Text color={C.dim}>○ waiting</Text>,
+    ], false, true)
   }
-  const inner = width - 4
-  const born = phase(s, 'spawn', a.id)
   const ended = phase(s, 'done', a.id)
+  const born = phase(s, 'spawn', a.id)
   const tone = a.isSwarm ? C.blue : C.dim
   const border =
     a.status === 'failed' ? C.red
     : ended !== null && a.status === 'done' ? (isLit(s, ended) ? C.greenHi : C.green)
     : born !== null && isLit(s, born) ? C.blueHi
     : tone
+  const pal = a.status === 'done' ? PALETTE.done : a.status === 'failed' ? PALETTE.failed : PALETTE.swarm
+  const took = elapsed((a.endedAt ?? s.now) - a.startedAt)
   const status =
-    a.status === 'running' ? <Text color={C.blue}>{spin(s)} running {elapsed(s.now - a.startedAt)}</Text>
-    : a.status === 'done' ? <Text color={ended !== null ? C.greenHi : C.green} bold={ended !== null}>✓ done {elapsed((a.endedAt ?? s.now) - a.startedAt)}</Text>
-    : a.status === 'failed' ? <Text color={C.red}>✗ failed</Text>
-    : <Text color={C.dim}>◌ cancelled</Text>
-  return (
-    <Box flexDirection="column" borderStyle={a.isSwarm ? 'single' : 'round'} borderColor={border} paddingX={1} width={width}>
-      <Box justifyContent="center"><Text bold color={C.fg}>{pad(a.label, inner).trimEnd()}</Text></Box>
-      <Box justifyContent="center"><Text color={tone}>{a.isSwarm ? modelLabel(a.model) : `fallback · ${modelLabel(a.model)}`}</Text></Box>
-      <Box justifyContent="center"><Text color={C.fg}>{pad(a.isWorktree ? 'in a worktree' : a.description || a.type, inner).trimEnd()}</Text></Box>
-      <Box justifyContent="center"><Text color={C.dim}>{turnsLabel(a)}</Text></Box>
-      <Box justifyContent="center">{status}</Box>
-    </Box>
+    a.status === 'running' ? <Text color={C.blue}>● running {elapsed(s.now - a.startedAt)}</Text>
+    : a.status === 'done' ? <Text color={ended !== null ? C.greenHi : C.green} bold={ended !== null}>✓ done {took}</Text>
+    : a.status === 'failed' ? <Text color={C.red}>✗ failed {took}</Text>
+    : <Text color={C.dim}>◌ cancelled {took}</Text>
+  return card(
+    border,
+    [
+      <Box justifyContent="space-between">
+        <Text bold color={C.fg}>{fit(a.label, inner - MINI_W - 1)}</Text>
+        <Orbit el={el} palette={pal} sprite={miniOrbit(agentPhase(s, a), s.reduceMotion)} />
+      </Box>,
+      <Text color={tone}>{fit(a.isSwarm ? modelLabel(a.model) : `${modelLabel(a.model)} · fallback`, inner)}</Text>,
+      <Text color={C.fg}>{fit(a.isWorktree ? 'in a worktree' : a.description || a.type, inner)}</Text>,
+      <Text color={C.dim}>{fit(turnsLabel(a), inner)}</Text>,
+      status,
+    ],
+    !a.isSwarm,
   )
 }
 
@@ -706,18 +733,6 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
         <Text color={C.dim}>{' '.repeat(Math.max(0, third - 1))}╭</Text>
         <Track el={el} width={trackW} dots={out} color={C.blueHi} />
         <Text color={C.dim}>╮</Text>
-      </Box>
-      <Box gap={1}>
-        {[0, 1, 2].map(i => {
-          const a = shown[i]
-          const ph = agentPhase(s, a)
-          const pal = !a ? PALETTE.swarm : a.status === 'done' ? PALETTE.done : a.status === 'failed' ? PALETTE.failed : PALETTE.swarm
-          return (
-            <Box width={boxW} justifyContent="center">
-              <Orbit el={el} palette={pal} sprite={swarmOrbit(ph, s.reduceMotion)} />
-            </Box>
-          )
-        })}
       </Box>
       <Box gap={1}>
         {[0, 1, 2].map(i => (
