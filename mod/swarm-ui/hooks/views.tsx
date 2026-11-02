@@ -231,15 +231,27 @@ function ModelLegend({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       <Text color={C.dim}>{part}</Text>
     </Box>
   )
+  const u = s.usage
+  const inner = width - 4
+  const line = (label: string, value: string, color: string = C.fg) => (
+    <Box justifyContent="space-between"><Text color={C.dim}>{label}</Text><Text color={color}>{fit(value, inner - label.length - 1)}</Text></Box>
+  )
+  const showContext = s.prefs.telemetry.context
+  const showCost = s.prefs.telemetry.cost
   return (
     <Box flexDirection="column" width={width} borderStyle="single" borderColor="#3a3b4a" paddingX={1}>
+      {showContext && line('context', u.tokens === null || !u.window ? 'N/A' : `${compact(u.tokens)} / ${compact(u.window)}`, TONE[tone(u.percent)])}
+      {showContext && u.tokens !== null && !!u.window && line('left', `${compact(u.window - u.tokens)} · ${u.percent ?? 'N/A'}%`, C.dim)}
+      {showCost && line('session', `${usd(u.costUsd)} API est.`)}
+      {u.compactions > 0 && line('compactions', String(u.compactions), C.dim)}
+      {(showContext || showCost) && <Text color="#3a3b4a">{'─'.repeat(Math.max(0, inner))}</Text>}
       {row(C.orange, modelLabel(s.lead.model), 'lead')}
       {row(C.blue, haikuModel(s), 'swarm')}
       {row(C.purple, advisorLabel(s), 'advisor')}
       {s.prefs.jev !== 'hidden' && row(C.green, 'jev', 'router')}
       <Text color="#3a3b4a">{'─'.repeat(Math.max(0, width - 4))}</Text>
       <Text><Text color={C.amber}>◈ </Text><Text color={C.dim}>Mode: </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
-      <Text color={C.dim}>ctrl+x ←/→ resize</Text>
+      <Text color={C.dim}>{fit(`↔ /swarm width ${s.prefs.paneColumns}`, inner)}</Text>
     </Box>
   )
 }
@@ -746,7 +758,6 @@ function Diagram({ el, s, width: room, act }: { el: El; s: Snapshot; width: numb
       <Box justifyContent="center" width={width}>
         <Box width={Math.min(width, 46)} flexDirection="column"><LeadBox el={el} s={s} /></Box>
       </Box>
-      <Box justifyContent="center"><TelemetryLine el={el} s={s} /></Box>
       <Box justifyContent="center"><Text color={C.orange}>┆</Text></Box>
       {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
       {s.prefs.jev === 'line' && <Box justifyContent="center"><JevLine el={el} s={s} /></Box>}
@@ -840,7 +851,6 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
         </Text>
       </Box>
       <LeadBox el={el} s={s} />
-      <TelemetryLine el={el} s={s} />
       {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
       {s.prefs.jev === 'line' && <JevLine el={el} s={s} />}
       {pickAgents(s.agents).map(agent => (

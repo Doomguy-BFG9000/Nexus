@@ -173,6 +173,8 @@ export type Prefs = {
   telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
   /** Session log rows above the prompt, 0 to 6. */
   logRows: number
+  /** The width the pane asks for when it opens (a width dragged or keyed in Claude Code wins). */
+  paneColumns: number
   jev: 'bars' | 'line' | 'hidden'
   escalation: 'ask' | 'off'
   cacheGuard: {

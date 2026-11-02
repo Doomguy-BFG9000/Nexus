@@ -14,6 +14,7 @@ export const DEFAULT_PREFS: Prefs = {
   advisorOrbit: 'wide',
   telemetry: { context: true, cost: true, usage: true, tokens: false },
   logRows: 4,
+  paneColumns: 92,
   jev: 'bars',
   escalation: 'ask',
   cacheGuard: { enabled: false, idleMin: 50, maxHours: 8, maxBeats: 10, budgetUsd: 0.5, trustTtl: false },
@@ -44,6 +45,7 @@ export function migrate(raw: unknown): Prefs {
       tokens: bool(t.tokens, d.telemetry.tokens),
     },
     logRows: Math.round(num(r.logRows, 0, 6, d.logRows)),
+    paneColumns: Math.round(num(r.paneColumns, 40, 200, d.paneColumns)),
     jev: pick(r.jev, ['bars', 'line', 'hidden'], d.jev),
     escalation: pick(r.escalation, ['ask', 'off'], d.escalation),
     cacheGuard: {
@@ -68,6 +70,7 @@ export const SETTINGS: { key: string; options?: string[]; range?: [number, numbe
   { key: 'telemetry.usage', options: ['on', 'off'], help: 'plan usage bars' },
   { key: 'telemetry.tokens', options: ['on', 'off'], help: 'per-model tokens in the strip' },
   { key: 'logRows', range: [0, 6], help: 'session log rows' },
+  { key: 'paneColumns', range: [40, 200], help: 'pane width (also /swarm width)' },
   { key: 'jev', options: ['bars', 'line', 'hidden'], help: 'Jev panel' },
   { key: 'escalation', options: ['ask', 'off'], help: 'stronger-mode suggestions' },
   { key: 'cacheGuard.enabled', options: ['on', 'off'], help: 'Cache Guard' },

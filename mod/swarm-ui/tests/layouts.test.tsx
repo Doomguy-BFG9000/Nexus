@@ -140,6 +140,49 @@ test('NEXUS sits on top with its subtitle beneath; the model legend is vertical 
   expect(at(/recent/)).toBeLessThan(at(/■ sonnet 5\.5\n/))
   expect(all).toMatch(/■ sonnet 5\.5\n[\s\S]{0,40}lead\n■ haiku/)
   expect(all).toMatch(/◈ Mode: Balanced/)
-  expect(all).toMatch(/ctrl\+x ←\/→ resize/)
-  expect(at(/ctrl\+x ←\/→ resize/)).toBeLessThan(at(/◂ advisor/))
+  expect(all).toMatch(/↔ \/swarm width 92$/m)
+  // Context and session cost sit at the bottom left, above the models.
+  expect(at(/recent/)).toBeLessThan(at(/^context$/m))
+  expect(at(/^session$/m)).toBeLessThan(at(/■ sonnet 5\.5\n/))
+  expect(at(/↔ \/swarm width/)).toBeLessThan(at(/◂ advisor/))
+})
+
+test('/swarm width resizes the pane without key chords, clamps, and is saved', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  const opens = w.opened.length
+  expect((await run($, 'width 120')).text).toMatch(/Pane width → 120 columns/)
+  expect(w.opened.length).toBe(opens + 1)
+  expect((await run($, 'width wider')).text).toMatch(/→ 130 columns/)
+  expect((await run($, 'width narrower')).text).toMatch(/→ 120 columns/)
+  expect((await run($, 'width 9999')).text).toMatch(/→ 200 columns/)
+  expect((await run($, 'width')).text).toMatch(/asks for 200 columns\. Usage/)
+  await start($)
+  expect((await run($, 'settings paneColumns')).text).toBe('paneColumns is 200')
+})
+
+test('/swarm width says so when a width set by hand in Claude Code is in charge', async ($, on) => {
+  const opened: string[] = []
+  mock.clock(on, { now: 4_000_000 })
+  mock.env(on, { HOME: '/home/test' })
+  mock.store(on, {})
+  on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
+  on('session.id', () => ({ value: 's' }))
+  on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
+  on('config.list', () => ({ value: [] }))
+  on('process.run', () => ({ value: { exitCode: 44, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/home/test/.claude.json') return { value: JSON.stringify({ pluginPanes: { dockColumns: 101 } }) }
+    throw new Error('none')
+  })
+  await start($)
+  const out = (await run($, 'width 120')).text
+  expect(out).toMatch(/asked for 120 columns \(saved\), but Claude Code is keeping a width set by hand: 101 columns/)
+  expect(out).toMatch(/NEXUS never edits it/)
 })

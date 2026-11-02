@@ -80,7 +80,7 @@ test('context and cost come straight from Claude Code, labelled API est.', async
   await start($)
   const all = await texts($)
   expect(all).toMatch(/97k \/ 200k/)
-  expect(all).toMatch(/103k left · 49%/)
+  expect(all).toMatch(/left[\s\S]{0,3}103k · 49%/)
   expect(all).toMatch(/\$0\.82/)
   expect(all).toMatch(/API est\./)
 })
@@ -126,9 +126,9 @@ test('nothing reported: N/A, never zero', async ($, on) => {
   engine(on, {})
   await start($)
   const all = await texts($)
-  expect(all).toMatch(/context N\/A/)
+  expect(all).toMatch(/context[\s\S]{0,3}N\/A/)
   expect(all).toMatch(/no limits yet/)
-  expect(all).toMatch(/session \n?N\/A/)
+  expect(all).toMatch(/session[\s\S]{0,3}N\/A API est\./)
 })
 
 test('tokens by model: each request once, lead and agents apart', async ($, on) => {
@@ -148,5 +148,5 @@ test('compactions are counted, not caused', async ($, on) => {
   engine(on, { usage: USAGE })
   await start($)
   await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as any)
-  expect(await texts($)).toMatch(/1 compaction/)
+  expect(await texts($)).toMatch(/compactions[\s\S]{0,3}1/)
 })

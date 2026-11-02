@@ -470,12 +470,47 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
   await update($, prefs, () => next)
   await savePrefs($, next)
   if (next.layout === 'minimal' && was.layout !== 'minimal') await $.ui.close({ id: PANE }).catch(() => undefined)
-  if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(PANE_OPEN)
+  if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(paneOpen(next))
+  if (next.paneColumns !== was.paneColumns && next.layout !== 'minimal') void $.ui.open(paneOpen(next))
   await syncMotion($)
   animate($)
   if (JSON.stringify(was.cacheGuard) !== JSON.stringify(next.cacheGuard)) {
     if (!next.cacheGuard.enabled) cancelGuard()
     await guardTick($)
+  }
+}
+
+/** The pane's open request at the preferred width. */
+function paneOpen(p: Prefs) {
+  return { ...PANE_OPEN, columns: p.paneColumns }
+}
+
+/** `/swarm width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
+async function widthCommand($: EngineInterface, arg: string): Promise<string> {
+  const p = await read($, prefs)
+  const want = arg === 'wider' ? p.paneColumns + 10 : arg === 'narrower' ? p.paneColumns - 10 : Number(arg)
+  if (!arg || !Number.isFinite(want)) return `The pane asks for ${p.paneColumns} columns. Usage: /swarm width <40-200> | wider | narrower`
+  const columns = Math.round(Math.min(200, Math.max(40, want)))
+  await applyPrefs($, p, { ...p, paneColumns: columns })
+  const kept = await keptDockColumns($)
+  if (kept !== null && kept !== columns) {
+    return [
+      `NEXUS asked for ${columns} columns (saved), but Claude Code is keeping a width set by hand: ${kept} columns, and that always wins.`,
+      'To change it: drag the pane\'s left edge with the mouse, or ctrl+x ←/→ while the pane is focused.',
+      'To hand the width back to /swarm width, remove "dockColumns" under "pluginPanes" in ~/.claude.json (Claude Code\'s own file; NEXUS never edits it).',
+    ].join('\n')
+  }
+  return `Pane width → ${columns} columns (Claude Code caps a docked pane at 45% of the terminal; saved for later sessions).`
+}
+
+/** The dock width Claude Code keeps after the person resized it by hand; read only. */
+async function keptDockColumns($: EngineInterface): Promise<number | null> {
+  try {
+    const raw = JSON.parse(await $.fs.read(`${home}/.claude.json`)) as { pluginPanes?: { dockColumns?: unknown } }
+    const v = raw.pluginPanes?.dockColumns
+    return typeof v === 'number' ? v : null
+  } catch {
+    return null
   }
 }
 
@@ -1001,7 +1036,10 @@ export const register: Register = (on, options) => {
     // Asked for in /config: calibrate in the background, act only once it passes.
     if (jevKey && opts.jevRouting === 'active' && routing !== 'active') void calibrate($)
     // Unasked, the engine seats it only on a wide terminal; /swarm opens it anywhere.
-    if ((await read($, prefs)).layout !== 'minimal') void $.ui.open(PANE_OPEN)
+    {
+      const p = await read($, prefs)
+      if (p.layout !== 'minimal') void $.ui.open(paneOpen(p))
+    }
 
     return next(e)
   })
@@ -1018,6 +1056,7 @@ export const register: Register = (on, options) => {
       return { text: agentDetail(agent, await $.clock.now()) }
     }
     if (sub === 'settings') return { text: await settingsCommand($, arg) }
+    if (sub === 'width') return { text: await widthCommand($, arg) }
     if (sub === 'usage') return { text: await usageText($) }
     if (sub === 'cache') {
       if (arg === 'on' || arg === 'off') {
@@ -1031,8 +1070,8 @@ export const register: Register = (on, options) => {
       await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
       return { text: 'Swarm pane: diagram.' }
     }
-    const opened = await $.ui.open(PANE_OPEN)
-    return { text: opened.isPlaced ? 'Swarm pane opened. ctrl+x tab focuses it; then 1-9 inspect an agent.' : `Swarm pane waits: ${opened.reason}` }
+    const opened = await $.ui.open(paneOpen(await read($, prefs)))
+    return { text: opened.isPlaced ? 'NEXUS pane opened. Click it (or ctrl+x tab) to focus, then 1-9 inspect an agent; /swarm width resizes it.' : `Swarm pane waits: ${opened.reason}` }
   })
 
   on('command.run', { command: 'swarm-mode' }, async ($, e) => {
