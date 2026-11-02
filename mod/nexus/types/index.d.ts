@@ -229,7 +229,7 @@ export type Guard = {
 
 export type CouncilRole = 'security' | 'architecture' | 'performance'
 
-export type ReviewerStatus = 'idle' | 'running' | 'done' | 'incomplete' | 'failed' | 'stale'
+export type ReviewerStatus = 'idle' | 'queued' | 'running' | 'done' | 'incomplete' | 'failed' | 'stale'
 
 /** One specialist's latest review: every field from its own spawn, tool calls and turn.complete. */
 export type Reviewer = {

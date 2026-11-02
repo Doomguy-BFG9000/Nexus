@@ -358,6 +358,7 @@ const COUNCIL_SHORT: Record<CouncilRole, string> = { security: 'SEC', architectu
 /** A reviewer's status word and its colour: only what its own lifecycle said. */
 function reviewerState(s: Snapshot, r: Reviewer): { text: string; color: string } {
   if (r.status === 'running') return { text: `${spin(s)} ${r.startedAt === null ? '' : elapsed(s.now - r.startedAt)}`.trim(), color: C.purpleHi }
+  if (r.status === 'queued') return { text: '◌ authorized', color: C.purple }
   if (r.status === 'done') return { text: '✓ done', color: C.green }
   if (r.status === 'stale') return { text: '◌ stale', color: C.amber }
   if (r.status === 'incomplete') return { text: '◌ INCOMPLETE', color: C.amber }

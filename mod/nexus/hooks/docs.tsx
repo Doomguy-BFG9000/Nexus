@@ -32,7 +32,10 @@ export const HELP: HelpSection[] = [
   },
   {
     title: 'Models',
-    rows: [{ cmd: '/nexus-mode [balanced|deep|max|default|status]', text: 'reasoning mode for this session' }],
+    rows: [
+      { cmd: '/nexus-mode [balanced|deep|max|default|status]', text: 'reasoning mode for this session' },
+      { cmd: '/nexus council [adaptive|on|off|status|findings|ledger]', text: 'Opus Council: reviewers, last verdict, tool ledger' },
+    ],
   },
   {
     title: 'Telemetry',
@@ -80,6 +83,7 @@ export const ABOUT: AboutSection[] = [
       'Lead · Sonnet by default (Opus or Fable in stronger modes) reads your request, edits and runs tests.',
       'Agents · Haiku subagents take delegated work in parallel: mapping a repo, searching, reviewing.',
       'Advisor · a stronger model the lead consults before big decisions. It reads the session and never writes code.',
+      'Council · read-only Opus reviewers (security, architecture, performance) the lead can launch at a review checkpoint. Adaptive (default): only the one the advisor picks. On: all three. Off: the advisor alone.',
       'Jev · optional. It answers small routing questions (which file, which tool, retry or not). Observe-only by default.',
     ],
   },

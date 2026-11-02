@@ -65,6 +65,8 @@ export type Snapshot = {
   untracked: string[]
   files: string[]
   isTruncated: boolean
+  /** Untracked files left out because they look like secrets. */
+  withheld?: number
 }
 
 /** Diff text a reviewer gets in its prompt; past this it is told the rest was cut and to Read the files. */
@@ -80,6 +82,7 @@ export function reviewerTask(role: CouncilRole, snap: Snapshot, summary: string,
     rationale ? `Why you were asked: ${rationale}` : '',
     `Changed files: ${snap.files.join(', ') || 'none listed'}`,
     snap.untracked.length ? `New untracked files (not in the diff; Read them): ${snap.untracked.join(', ')}` : '',
+    snap.withheld ? `${snap.withheld} untracked file(s) that look like secrets were withheld; do not try to read them.` : '',
     cut ? `The diff below is TRUNCATED at ${DIFF_CHARS} characters. Read the changed files for the rest; do not assume what you cannot see.` : '',
     '```diff',
     diff || '(no tracked changes)',
@@ -155,14 +158,30 @@ export function parseFindings(answer: string, role: CouncilRole): Omit<Finding, 
         severity,
         file: typeof f.file === 'string' && f.file.trim() ? f.file.trim().replace(/^\.\//, '') : null,
         line,
-        title: title.slice(0, 200),
-        evidence: typeof f.evidence === 'string' ? f.evidence.trim().slice(0, 600) : '',
-        action: typeof f.action === 'string' ? f.action.trim().slice(0, 400) : '',
+        title: redact(title).slice(0, 200),
+        evidence: typeof f.evidence === 'string' ? redact(f.evidence.trim()).slice(0, 600) : '',
+        action: typeof f.action === 'string' ? redact(f.action.trim()).slice(0, 400) : '',
         confidence,
       }]
     })
   }
   return null
+}
+
+/** Emails, credential assignments and long token-like strings, masked before NEXUS shows or returns a finding. */
+export function redact(text: string): string {
+  return text
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email redacted]')
+    .replace(/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY)[A-Z0-9_]*)\s*[=:]\s*\S+/gi, '$1=[redacted]')
+    .replace(/\b(?:sk|ghp|gho|xox[abprs]|AKIA)[A-Za-z0-9_-]{10,}\b/g, '[token redacted]')
+    .replace(/\b[A-Za-z0-9_\-]{40,}\b/g, '[long token redacted]')
+}
+
+/** A reviewer's path as the repository names it: absolute paths under the root lose the root. */
+export function relPath(file: string | null, root: string): string | null {
+  if (!file) return file
+  const r = root.endsWith('/') ? root : `${root}/`
+  return root && file.startsWith(r) ? file.slice(r.length) : file
 }
 
 /** Paths a reviewer may not read and NEXUS will not quote. */
@@ -341,8 +360,8 @@ export function councilTokens(c: Council): Tokens {
 export function composeSection(activation: 'adaptive' | 'on', hasAdvisor: boolean): string {
   const lines = [
     `NEXUS Council is ${activation === 'on' ? 'ON (full council)' : 'ADAPTIVE'} in this session.`,
-    `At a genuine review checkpoint (you changed code in a meaningful way and ${hasAdvisor ? 'consulted the advisor about it' : 'want an independent review'}) you may call ${COUNCIL_TOOL} once for that change. Not for trivial edits, not twice for the same diff, never from a subagent.`,
-    'Pass `summary` (one or two lines: what changed). The tool reviews the working tree diff with read-only Opus reviewers and returns findings: treat them as claims to verify against the code before you act on any.',
+    `At a genuine review checkpoint (you changed code in a meaningful way and ${hasAdvisor ? 'consulted the advisor about it' : 'want an independent review'}), call ${COUNCIL_TOOL} once for that change. Not for trivial edits, not twice for the same diff, never from a subagent.`,
+    'Pass `summary` (one or two lines: what changed). The tool authorizes read-only Opus reviewers and tells you exactly which to launch with the Agent tool; launch those, in one message, in the foreground. Their checked findings come back with the Agent results: treat them as claims to verify against the code before you act on any.',
   ]
   if (activation === 'adaptive') {
     lines.push(

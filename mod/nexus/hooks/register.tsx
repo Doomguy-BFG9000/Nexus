@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
-import type { Advisor, Checkpoint, Council, CouncilRole, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, NexusAgent, Reviewer, Usage, View } from '../types'
+import type { Advisor, Checkpoint, Council, CouncilRole, Finding, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, NexusAgent, Reviewer, Usage, View } from '../types'
 import { C, clock, compact, elapsed, modelLabel, role } from './format'
 import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
@@ -46,6 +46,9 @@ import {
   hashText,
   idleReviewer,
   isCouncilType,
+  roleOfType,
+  isSecretPath,
+  relPath,
   mayCall,
   parseFindings,
   parseSelection,
@@ -1186,12 +1189,11 @@ async function escalate($: EngineInterface, text: string) {
 
 // ---- NEXUS Council: read-only Opus reviewers at a review checkpoint ---------
 
-/** How one reviewer's run ended: its turn.complete, or the engine dropping it with none. */
-type ReviewerEnd = { reason: 'answer' | 'aborted' | 'refusal' | 'error' | 'lost'; answer: string }
-const reviewerEnds = new Map<string, (end: ReviewerEnd) => void>()
-/** agentId → role, for every reviewer this session spawned (kept after it ends, for late events). */
+/** How one reviewer's run ended, as its turn.complete said. */
+type ReviewerEnd = { reason: 'answer' | 'aborted' | 'refusal' | 'error'; answer: string }
+const reviewerEnds = new Map<string, ReviewerEnd>()
+/** agentId → role, set by the agent.spawn hook before the reviewer's first tool call (kept for late events). */
 const reviewerRoles = new Map<string, CouncilRole>()
-let councilRunning = false
 let checkpointCount = 0
 
 const GIT_OUT_CHARS = 40_000
@@ -1207,44 +1209,22 @@ async function reviewSnapshot($: EngineInterface): Promise<ReviewSnapshot | { er
   const diff = await git($, ['git', 'diff', 'HEAD', '--no-color', '--no-ext-diff']).catch(() => null)
   if (!diff || diff.exitCode !== 0) return { error: `git diff failed${diff ? `: ${diff.stderr.trim().slice(0, 160)}` : ''}` }
   const others = await git($, ['git', 'ls-files', '--others', '--exclude-standard']).catch(() => null)
-  const untracked = (others?.exitCode === 0 ? others.stdout.split('\n') : []).map(l => l.trim()).filter(Boolean).slice(0, 200)
+  const allUntracked = (others?.exitCode === 0 ? others.stdout.split('\n') : []).map(l => l.trim()).filter(Boolean).slice(0, 200)
+  // Secret-looking files still count for the hash, but are never pointed out to a reviewer.
+  const untracked = allUntracked.filter(f => !isSecretPath(f))
   const files = [...diffFiles(diff.stdout), ...untracked.filter(f => !diffFiles(diff.stdout).includes(f))]
   return {
-    hash: hashText(`${diff.stdout}\n--untracked--\n${untracked.join('\n')}`),
+    hash: hashText(`${diff.stdout}\n--untracked--\n${allUntracked.join('\n')}`),
     diff: diff.stdout,
     untracked,
     files,
     isTruncated: diff.isStdoutTruncated,
+    withheld: allUntracked.length - untracked.length,
   }
 }
 
 async function patchReviewer($: EngineInterface, role: CouncilRole, change: (r: Reviewer) => Reviewer) {
   await update($, council, c => ({ ...c, reviewers: { ...c.reviewers, [role]: change(c.reviewers[role]) } }))
-}
-
-/** Waits for a reviewer's turn.complete. No time limit of NEXUS's own: it only notices an agent the engine dropped with no result. */
-function reviewerEnd($: EngineInterface, agentId: string): Promise<ReviewerEnd> {
-  return new Promise(resolve => {
-    reviewerEnds.set(agentId, resolve)
-    void watchReviewer($, agentId)
-  })
-}
-
-async function watchReviewer($: EngineInterface, agentId: string) {
-  for (;;) {
-    await $.clock.sleep(15_000)
-    if (!reviewerEnds.has(agentId)) return
-    const list = await $.agent.list().catch(() => null)
-    const me = list?.find(a => a.id === agentId)
-    if (list && (!me || me.status === 'failed' || me.status === 'killed')) {
-      await $.clock.sleep(3_000) // its turn.complete may still be on its way
-      const end = reviewerEnds.get(agentId)
-      if (!end) return
-      reviewerEnds.delete(agentId)
-      end({ reason: 'lost', answer: '' })
-      return
-    }
-  }
 }
 
 /** Line counts of the files findings name, as they are now; null when unreadable or a secret. */
@@ -1262,56 +1242,30 @@ async function lineCounts($: EngineInterface, files: string[]): Promise<Record<s
   return out
 }
 
-/** One reviewer, start to end: spawn, wait, read its findings. Never reports success it did not see. */
-async function runReviewer($: EngineInterface, role: CouncilRole, snap: ReviewSnapshot, summary: string, rationale: string | null) {
-  const startedAt = await $.clock.now()
-  await patchReviewer($, role, () => ({ ...idleReviewer(role), status: 'running', startedAt, rationale, activity: 'starting' }))
-  await addFx($, 'council-out', role)
-  const spawned = await $.agent
-    .spawn({ subagentType: agentType(role), prompt: reviewerTask(role, snap, summary, rationale), description: `${role} review` })
-    .catch((err: unknown) => ({ deny: String(err) }) as { deny: string; agentId?: undefined })
-  if (!spawned.agentId) {
-    const why = 'deny' in spawned && spawned.deny ? String(spawned.deny) : 'the engine started no agent'
-    await patchReviewer($, role, r => ({ ...r, status: 'failed', endedAt: startedAt, reason: `not launched: ${why}`, activity: null }))
-    await addFx($, 'council-fail', role)
-    return { role, findings: null as ReturnType<typeof parseFindings> }
-  }
-  const agentId = spawned.agentId
-  reviewerRoles.set(agentId, role)
-  await update($, council, c => ({ ...c, launches: c.launches + 1, granted: { ...c.granted, [agentId]: [] } }))
-  await patchReviewer($, role, r => ({ ...r, agentId, activity: 'reviewing' }))
-  await addLog($, { who: 'council', kind: 'start', text: `${ROLE_LABEL[role].toLowerCase()} opus started`, detail: rationale ?? 'full council' })
-
-  const end = await reviewerEnd($, agentId)
-  const endedAt = await $.clock.now()
-  if (end.reason !== 'answer') {
-    const why = { aborted: 'interrupted before it answered', refusal: 'the model refused', error: 'the run ended on an API error', lost: 'the agent ended without a result' }[end.reason]
-    const status = end.reason === 'aborted' || end.reason === 'lost' ? 'incomplete' : 'failed'
-    await patchReviewer($, role, r => ({ ...r, status, endedAt, reason: why, activity: null }))
-    await addFx($, 'council-fail', role)
-    await addLog($, { who: 'council', kind: 'error', text: `${ROLE_LABEL[role].toLowerCase()} ${status}`, detail: why })
-    return { role, findings: null }
-  }
-  const findings = parseFindings(end.answer, role)
-  if (findings === null) {
-    await patchReviewer($, role, r => ({ ...r, status: 'incomplete', endedAt, reason: 'its answer had no readable findings block', activity: null }))
-    await addFx($, 'council-fail', role)
-    await addLog($, { who: 'council', kind: 'error', text: `${ROLE_LABEL[role].toLowerCase()} incomplete`, detail: 'no findings block' })
-    return { role, findings: null }
-  }
-  await patchReviewer($, role, r => ({ ...r, status: 'done', endedAt, findings: findings.length, activity: null }))
-  await addFx($, 'council-back', role)
-  await addLog($, { who: 'council', kind: 'done', text: `${ROLE_LABEL[role].toLowerCase()} returned`, detail: `${findings.length} finding${findings.length === 1 ? '' : 's'} · ${elapsed(endedAt - startedAt)}` })
-  return { role, findings }
+/**
+ * The checkpoint the lead is launching: what it may launch, the fixed snapshot
+ * each reviewer is given, and what has come back. One at a time; it closes when
+ * every authorized reviewer has answered, or at the end of the lead's turn.
+ */
+type OpenCheckpoint = {
+  cp: Checkpoint
+  roles: CouncilRole[]
+  snap: ReviewSnapshot
+  summary: string
+  launched: Set<CouncilRole>
+  results: Map<CouncilRole, Omit<Finding, 'ref'>[] | null>
 }
+let open: OpenCheckpoint | null = null
+/** The lead's Agent call (tool_use_id) that launched each reviewer: a call that launched none never touches a result. */
+const launchedBy = new Map<string, CouncilRole>()
 
-/** The council_review tool: one checkpoint, the reviewers the mode allows, the verdict back to the lead. */
+/** The council_review tool: authorizes one checkpoint and says exactly which reviewers to launch. */
 async function councilReview($: EngineInterface, input: Record<string, unknown>): Promise<string> {
   const p = await read($, prefs)
   const activation = p.council.activation
   if (!councilReady) return `NEXUS Council could not start in this session (${councilError ?? 'its agents were not registered'}). Nothing was launched.`
   if (activation === 'off') return 'NEXUS Council is off (/nexus council adaptive|on to enable). Nothing was launched; continue with the advisor as usual.'
-  if (councilRunning) return 'A council review is already running; its verdict comes back to the call that started it. Not launched again.'
+  if (open && open.launched.size > open.results.size) return 'A council review is already running; its verdict comes back with the reviewers’ Agent results. Not launched again.'
 
   const at = await $.clock.now()
   const summary = typeof input.summary === 'string' ? input.summary.trim().slice(0, 400) : ''
@@ -1336,49 +1290,150 @@ async function councilReview($: EngineInterface, input: Record<string, unknown>)
     if (!advisorSeen) return finish('refused', 'no advisor consultation was seen this turn: in Adaptive the advisor makes the pick, so nothing was launched')
     if (pick === 'none') return finish('skipped', `the advisor selected no specialist${rationale ? `: ${rationale}` : ''}`)
   }
-
   const snap = await reviewSnapshot($)
   if ('error' in snap) return finish('refused', snap.error)
   if (!snap.diff.trim() && !snap.untracked.length) return finish('skipped', 'no changes to review (working tree matches HEAD)')
   if (c.reviewed.includes(snap.hash)) return finish('skipped', `this exact diff (${snap.hash}) was already reviewed this session; not reviewed twice`, { hash: snap.hash, files: snap.files })
 
+  // An earlier checkpoint whose reviewers were never launched closes as such.
+  if (open) await closeCheckpoint($, 'a new checkpoint replaced it')
   const roles = reviewersFor(activation, pick === 'all' ? 'none' : pick)
-  councilRunning = true
   checkpointCount += 1
   const cp: Checkpoint = {
     id: checkpointCount, at, activation, selection: pick, rationale, advisorSeen, hash: snap.hash, files: snap.files,
     isTruncated: snap.isTruncated, status: 'running', reason: null, findings: [], isStale: false, endedAt: null,
   }
+  open = { cp, roles, snap, summary, launched: new Set(), results: new Map() }
   await update($, council, x => ({
     ...x,
     checkpoint: cp,
     reviews: x.reviews + 1,
-    // Adaptive: the specialists not picked show idle, not a stale earlier result.
-    reviewers: Object.fromEntries(ROLES.map(r => [r, roles.includes(r) ? x.reviewers[r] : idleReviewer(r)])) as Council['reviewers'],
+    // The specialists not authorized show idle, not an earlier result.
+    reviewers: Object.fromEntries(
+      ROLES.map(r => [r, roles.includes(r) ? { ...idleReviewer(r), status: 'queued' as const, rationale: activation === 'on' ? 'full council' : rationale } : idleReviewer(r)]),
+    ) as Council['reviewers'],
   }))
-  await addLog($, { who: 'council', kind: 'advisor', text: activation === 'on' ? 'full council requested' : `${pick} review requested`, detail: `${snap.files.length} file${snap.files.length === 1 ? '' : 's'} · ${snap.hash}` })
+  await addLog($, { who: 'council', kind: 'advisor', text: activation === 'on' ? 'full council authorized' : `${pick} review authorized`, detail: `${snap.files.length} file${snap.files.length === 1 ? '' : 's'} · ${snap.hash}` })
+  return [
+    `NEXUS Council checkpoint #${cp.id} authorized (snapshot ${snap.hash}, ${snap.files.length} file${snap.files.length === 1 ? '' : 's'}): ${roles.join(', ')}.`,
+    `Launch ${roles.length === 1 ? 'it' : 'them'} now with the Agent tool${roles.length > 1 ? ', all in ONE message so they run in parallel' : ''}, in the foreground (run_in_background false):`,
+    ...roles.map(r => `- subagent_type "${agentType(r)}", description "${r} review", prompt "checkpoint #${cp.id}"`),
+    'NEXUS gives each one the fixed snapshot; their checked findings come back with the Agent results. Launch no other council agent.',
+  ].join('\n')
+}
 
-  try {
-    const results = await Promise.all(roles.map(r => runReviewer($, r, snap, summary, activation === 'on' ? 'full council' : rationale)))
-    // Stale: the tree moved while they read it. Their findings are kept, and marked.
-    const after = await reviewSnapshot($)
-    const isStale = 'error' in after || after.hash !== snap.hash
-    const raw = results.flatMap(r => r.findings ?? [])
-    const checked = checkRefs(raw, await lineCounts($, raw.map(f => f.file).filter((f): f is string => !!f)))
-    const merged = dedupe(checked)
-    if (isStale) {
-      for (const r of roles) await patchReviewer($, r, x => (x.status === 'done' ? { ...x, status: 'stale', reason: 'the working tree changed during the review' } : x))
-    }
-    const ok = results.filter(r => r.findings !== null).length
-    const done: Checkpoint = { ...cp, status: ok === roles.length ? 'done' : 'partial', findings: merged, isStale, endedAt: await $.clock.now() }
-    const reviewers = (await read($, council)).reviewers
-    // Marked reviewed only when some reviewer answered: a checkpoint where every run failed can be tried again.
-    await update($, council, x => ({ ...x, checkpoint: done, reviewed: ok > 0 ? [...x.reviewed, snap.hash].slice(-20) : x.reviewed }))
-    await addLog($, { who: 'council', kind: ok === roles.length ? 'done' : 'error', text: `council ${done.status}`, detail: `${merged.length} finding${merged.length === 1 ? '' : 's'} after merge${isStale ? ' · stale' : ''}` })
-    return verdictText(done, roles.map(r => reviewers[r]))
-  } finally {
-    councilRunning = false
+/** agent.spawn for a council type: only what the open checkpoint authorized, once, with the fixed snapshot as its task. */
+async function councilSpawn($: EngineInterface, e: { subagentType?: string; prompt: string } & Record<string, unknown>, type: string, next: (e: any) => Promise<any>) {
+  const role = roleOfType(type)
+  if (!role) return { deny: `${type} is not a council reviewer` }
+  if (!open) return { deny: 'no open NEXUS Council checkpoint: call mcp__nexus__council_review first' }
+  if (!open.roles.includes(role)) {
+    return { deny: `${role} is not authorized at checkpoint #${open.cp.id} (${open.cp.activation === 'adaptive' ? `the advisor picked ${open.cp.selection}` : 'not in this checkpoint'})` }
   }
+  if (open.launched.has(role)) return { deny: `${role} was already launched for checkpoint #${open.cp.id}` }
+  open.launched.add(role)
+  const task = reviewerTask(role, open.snap, open.summary, open.cp.activation === 'on' ? 'full council' : open.cp.rationale)
+  const spawned = await next({ ...e, prompt: task, description: `${role} review`, background: false, ...('run_in_background' in e ? { run_in_background: false } : {}) })
+  const startedAt = await $.clock.now()
+  if (!spawned?.agentId) {
+    open.results.set(role, null)
+    const why = spawned && 'deny' in spawned && spawned.deny ? String(spawned.deny) : 'the engine started no agent'
+    await patchReviewer($, role, r => ({ ...r, status: 'failed', startedAt, endedAt: startedAt, reason: `not launched: ${why.slice(0, 120)}` }))
+    await addFx($, 'council-fail', role)
+    return spawned
+  }
+  const id: string = spawned.agentId
+  reviewerRoles.set(id, role)
+  if (typeof e.tool_use_id === 'string' && e.tool_use_id) launchedBy.set(e.tool_use_id, role)
+  await update($, council, c => ({ ...c, launches: c.launches + 1, granted: { ...c.granted, [id]: [] } }))
+  await patchReviewer($, role, r => ({ ...r, agentId: id, status: 'running', startedAt, activity: 'reviewing' }))
+  await addFx($, 'council-out', role)
+  await addLog($, { who: 'council', kind: 'start', text: `${ROLE_LABEL[role].toLowerCase()} opus started`, detail: `checkpoint #${open.cp.id}` })
+  return spawned
+}
+
+/** A council reviewer's Agent result, back in the lead's hook: how it ended, its findings, and the verdict once all are in. */
+async function councilResult($: EngineInterface, role: CouncilRole, ran: Record<string, unknown>, ranId: string | null): Promise<string> {
+  const now = await $.clock.now()
+  const r = (await read($, council)).reviewers[role]
+  const id = ranId ?? r.agentId
+  const end = id ? reviewerEnds.get(id) : undefined
+  const fail = async (status: 'failed' | 'incomplete', why: string) => {
+    open?.results.set(role, null)
+    await patchReviewer($, role, x => ({ ...x, status, endedAt: now, reason: why, activity: null }))
+    await addFx($, 'council-fail', role)
+    await addLog($, { who: 'council', kind: 'error', text: `${ROLE_LABEL[role].toLowerCase()} ${status}`, detail: why })
+  }
+  if ('deny' in ran && ran.deny) await fail(r.status === 'failed' ? 'failed' : 'incomplete', `not run: ${String(ran.deny).slice(0, 140)}`)
+  else if (end && end.reason !== 'answer') {
+    await fail(end.reason === 'aborted' ? 'incomplete' : 'failed', { aborted: 'interrupted before it answered', refusal: 'the model refused', error: 'the run ended on an API error' }[end.reason])
+  } else if (ran.isError) await fail('incomplete', `the Agent call ended in an error: ${String(ran.text ?? '').slice(0, 120)}`)
+  else {
+    const answer = end?.answer || (typeof ran.text === 'string' ? ran.text : '')
+    const findings = parseFindings(answer, role)
+    if (findings === null) await fail('incomplete', 'its answer had no readable findings block')
+    else {
+      open?.results.set(role, findings)
+      await patchReviewer($, role, x => ({ ...x, status: 'done', endedAt: now, findings: findings.length, activity: null }))
+      await addFx($, 'council-back', role)
+      await addLog($, { who: 'council', kind: 'done', text: `${ROLE_LABEL[role].toLowerCase()} returned`, detail: `${findings.length} finding${findings.length === 1 ? '' : 's'}${r.startedAt === null ? '' : ` · ${elapsed(now - r.startedAt)}`}` })
+    }
+  }
+  if (!open) return `NEXUS Council: ${role} ended; its checkpoint is already closed.`
+  const waiting = open.roles.filter(x => !open!.results.has(x))
+  if (waiting.length) {
+    const st = (await read($, council)).reviewers[role]
+    return `NEXUS Council checkpoint #${open.cp.id}: ${ROLE_LABEL[role]} ${st.status}${st.reason ? ` (${st.reason})` : ''}. Waiting for ${waiting.join(', ')}; the merged verdict comes with the last result.`
+  }
+  return finalizeCheckpoint($)
+}
+
+/** Every authorized reviewer has answered: re-hash for staleness, check references, merge, and close. */
+async function finalizeCheckpoint($: EngineInterface): Promise<string> {
+  const o = open!
+  open = null
+  const after = await reviewSnapshot($)
+  const isStale = 'error' in after || after.hash !== o.snap.hash
+  const raw = o.roles.flatMap(r => o.results.get(r) ?? []).map(f => ({ ...f, file: relPath(f.file, cwd) }))
+  const merged = dedupe(checkRefs(raw, await lineCounts($, raw.map(f => f.file).filter((f): f is string => !!f))))
+  if (isStale) for (const r of o.roles) await patchReviewer($, r, x => (x.status === 'done' ? { ...x, status: 'stale', reason: 'the working tree changed during the review' } : x))
+  const ok = o.roles.filter(r => o.results.get(r)).length
+  const done: Checkpoint = { ...o.cp, status: ok === o.roles.length ? 'done' : 'partial', findings: merged, isStale, endedAt: await $.clock.now() }
+  const reviewers = (await read($, council)).reviewers
+  // Marked reviewed only when some reviewer answered: a checkpoint where every run failed can be tried again.
+  await update($, council, x => ({ ...x, checkpoint: done, reviewed: ok > 0 ? [...x.reviewed, o.snap.hash].slice(-20) : x.reviewed }))
+  await addLog($, { who: 'council', kind: ok === o.roles.length ? 'done' : 'error', text: `council ${done.status}`, detail: `${merged.length} finding${merged.length === 1 ? '' : 's'} after merge${isStale ? ' · stale' : ''}` })
+  return verdictText(done, o.roles.map(r => reviewers[r]))
+}
+
+/** Closes an open checkpoint whose reviewers were not all launched: authorized, not launched, never a failure or a success. */
+async function closeCheckpoint($: EngineInterface, why: string) {
+  if (!open) return
+  const o = open
+  if (o.launched.size > o.results.size) return // reviewers still running: their results close it
+  const missing = o.roles.filter(r => !o.launched.has(r))
+  for (const r of missing) await patchReviewer($, r, x => ({ ...x, status: 'idle', reason: `authorized, not launched (${why})` }))
+  if (o.results.size) {
+    await finalizeCheckpoint($)
+    return
+  }
+  open = null
+  const closed: Checkpoint = { ...o.cp, status: 'partial', reason: `authorized, not launched: ${why}`, endedAt: await $.clock.now() }
+  await update($, council, x => ({ ...x, checkpoint: closed }))
+  await addLog($, { who: 'council', kind: 'info', text: 'council not launched', detail: why })
+}
+
+/** A reviewer's latest call, for its panel row: what ran, or what was refused. */
+async function noteActivity($: EngineInterface, agentId: string, text: string) {
+  const role = reviewerRoles.get(agentId)
+  if (role) await patchReviewer($, role, r => (r.agentId === agentId ? { ...r, tools: r.tools + 1, activity: text.slice(0, 40) } : r))
+}
+
+/** Records a refused reviewer call in the ledger: every denial is kept, whichever hook made it. */
+async function ledgerDeny($: EngineInterface, agentId: string, capability: string, why: string) {
+  const at = await $.clock.now()
+  const role = reviewerRoles.get(agentId) ?? null
+  await update($, council, x => ({ ...x, ledger: [...x.ledger, { at, role, agentId, capability: capability.slice(0, 60), decision: 'deny' as const, rule: why }].slice(-30) }))
 }
 
 /** A reviewer asks for more than it started with: the deterministic router answers, and the ledger records it. */
@@ -1495,7 +1550,36 @@ let councilModel = 'opus'
 export const register: Register = (on, options) => {
   opts = options
 
-  // ---- Council enforcement: first registered, so it sees every reviewer call ----
+  // Registered tools first: the engine routes a registered tool to the first hook naming it literally
+  // (a constant, a regex or a catch-all before it does not count). Each checks its own caller. `as 'Read'`: the typings list them only after a reload.
+  on('tool.call', { tool: 'mcp__nexus__council_review' as 'Read' }, async ($, e) => {
+    // Never from a subagent: no reviewer, and no Haiku agent, starts a council.
+    if (e.agentId) return { deny: 'council_review is for the lead only' }
+    try {
+      return { result: await councilReview($, e as unknown as Record<string, unknown>) }
+    } catch (err) {
+      await addLog($, { who: 'council', kind: 'error', text: 'council failed', detail: String(err).slice(0, 160) }).catch(() => undefined)
+      return { result: `NEXUS Council failed before it could finish (${String(err).slice(0, 200)}); no verdict. Nothing it started is reported as done.` }
+    }
+  }).catch(() => ({ result: 'NEXUS Council failed before it could finish; no verdict. Continue without it and check /nexus council.' }))
+  on('tool.call', { tool: 'mcp__nexus__request_capability' as 'Read' }, async ($, e) => ({ result: await requestCapability($, e.agentId, e as unknown as Record<string, unknown>) })).catch(() => ({
+    result: 'Denied: the request could not be checked.',
+  }))
+  on('tool.call', { tool: 'mcp__nexus__git_read' as 'Read' }, async ($, e) => {
+    // The enforcement hook above has already refused an ungranted call.
+    if (!e.agentId || !reviewerRoles.has(e.agentId)) return { deny: 'git_read is for council reviewers only' }
+    if (!((await read($, council)).granted[e.agentId] ?? []).includes(GIT_TOOL)) {
+      const why = `${GIT_TOOL} needs a grant: call ${REQUEST_TOOL} first`
+      await noteActivity($, e.agentId, '✗ refused git_read')
+      await ledgerDeny($, e.agentId, GIT_TOOL, why)
+      return { deny: why }
+    }
+    await noteActivity($, e.agentId, `git_read ${String((e as unknown as { op?: unknown }).op ?? '')}`)
+    return { result: await gitRead($, e as unknown as Record<string, unknown>) }
+  }).catch(() => ({ deny: 'git_read could not be checked, so it is refused' }))
+
+
+  // ---- Council enforcement: registered next, so it sees every other reviewer call ----
   // The agent definition already withholds write, shell and network tools; this
   // is the second check (secret paths, ungranted capabilities), with a ledger.
   on('tool.call', { tool: /^/ }, async ($, e, next) => {
@@ -1505,13 +1589,13 @@ export const register: Register = (on, options) => {
     const name = String(e.tool)
     const c = await read($, council)
     const verdict = mayCall(name, c.granted[id] ?? [], e as unknown as Record<string, unknown>)
-    const target = toolTarget(e)
-    await patchReviewer($, role, r => (r.agentId === id ? { ...r, tools: r.tools + 1, activity: `${name.replace(/^mcp__nexus__/, '')} ${target.label}`.trim().slice(0, 40) } : r))
+    const label = `${name.replace(/^mcp__nexus__/, '')} ${toolTarget(e).label}`.trim()
     if (!verdict.ok) {
-      const at = await $.clock.now()
-      await update($, council, x => ({ ...x, ledger: [...x.ledger, { at, role, agentId: id, capability: name.slice(0, 60), decision: 'deny' as const, rule: verdict.why }].slice(-30) }))
+      await noteActivity($, id, `✗ refused ${label}`)
+      await ledgerDeny($, id, name, verdict.why)
       return { deny: verdict.why }
     }
+    await noteActivity($, id, label)
     return next(e)
   }).catch(($, e, next) => (e.agentId && reviewerRoles.has(e.agentId) ? { deny: 'NEXUS could not check this reviewer call, so it is refused' } : next(e))) // fail closed for reviewers
 
@@ -1571,8 +1655,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // Council reviewers are started by NEXUS alone: the lead never sees them in its agent list.
-  for (const r of ROLES) on('agent.offer', { agent: agentType(r) }, async () => ({ isOffered: false })).catch(() => ({ isOffered: false }))
+  // The lead launches reviewers itself, after council_review authorizes them: listed only while Council is not off.
+  for (const r of ROLES) {
+    on('agent.offer', { agent: agentType(r) }, async $ => ({ isOffered: councilReady && (await read($, prefs)).council.activation !== 'off' })).catch(() => ({ isOffered: false }))
+  }
 
   // Council instructions for the lead (and the advisor, which reads the session), only while Council is not off.
   on('prompt.compose', async ($, e, next) => {
@@ -1583,21 +1669,6 @@ export const register: Register = (on, options) => {
     const hasAdvisor = Boolean((await read($, mode)).sessionAdvisor)
     return { ...out, sections: [...out.sections, { id: 'nexus-council', text: composeSection(activation, hasAdvisor), scope: 'session' as const }] }
   }).catch(($, e, next) => next(e))
-
-  on('tool.call', { tool: /^mcp__nexus__council_review$/ }, async ($, e) => {
-    // Never from a subagent: no reviewer, and no Haiku agent, starts a council.
-    if (e.agentId) return { deny: 'council_review is for the lead only' }
-    return { result: await councilReview($, e as unknown as Record<string, unknown>) }
-  }).catch(() => ({ result: 'NEXUS Council failed before it could finish; no verdict. Continue without it and check /nexus council.' }))
-  on('tool.call', { tool: /^mcp__nexus__request_capability$/ }, async ($, e) => ({ result: await requestCapability($, e.agentId, e as unknown as Record<string, unknown>) })).catch(() => ({
-    result: 'Denied: the request could not be checked.',
-  }))
-  on('tool.call', { tool: /^mcp__nexus__git_read$/ }, async ($, e) => {
-    // The enforcement hook above has already refused an ungranted call.
-    if (!e.agentId || !reviewerRoles.has(e.agentId)) return { deny: 'git_read is for council reviewers only' }
-    if (!((await read($, council)).granted[e.agentId] ?? []).includes(GIT_TOOL)) return { deny: `git_read needs a grant: call ${REQUEST_TOOL} first` }
-    return { result: await gitRead($, e as unknown as Record<string, unknown>) }
-  }).catch(() => ({ deny: 'git_read could not be checked, so it is refused' }))
 
   for (const c of COMMANDS) {
     on('command.run', { command: c.name }, async ($, e) => {
@@ -1628,14 +1699,12 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    const end = e.agentId ? reviewerEnds.get(e.agentId) : undefined
-    if (end && e.agentId) {
-      reviewerEnds.delete(e.agentId)
-      end({ reason: e.isAborted ? 'aborted' : e.reason, answer: e.answer })
+    if (e.agentId && reviewerRoles.has(e.agentId)) {
+      reviewerEnds.set(e.agentId, { reason: e.isAborted ? 'aborted' : e.reason, answer: e.answer })
       return next(e)
     }
-    if (e.agentId && reviewerRoles.has(e.agentId)) return next(e)
     if (!e.agentId) {
+      if (open) await closeCheckpoint($, 'the lead\u2019s turn ended before launching them')
       await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
       await refreshUsage($)
       await guardActivityEnded($)
@@ -1762,12 +1831,12 @@ export const register: Register = (on, options) => {
 
   // ---- subagents ----------------------------------------------------------
   on('agent.spawn', async ($, e, next) => {
+    // Council reviewers: only what an open checkpoint authorized, with its fixed snapshot; never a Haiku card.
+    // (A spawn can arrive Agent-tool shaped, `subagent_type`; read either.)
+    const spawnType = String(e.subagentType ?? (e as unknown as { subagent_type?: string }).subagent_type ?? '')
+    if (isCouncilType(spawnType)) return councilSpawn($, e as unknown as { prompt: string } & Record<string, unknown>, spawnType, next)
     const spawned = await next(e)
     if (!spawned.agentId) return spawned
-    // Council reviewers have their own panel: never a Haiku card. (A spawn made from inside a
-    // tool call can arrive Agent-tool shaped, `subagent_type`; read either.)
-    const spawnType = String(e.subagentType ?? (e as unknown as { subagent_type?: string }).subagent_type ?? '')
-    if (isCouncilType(spawnType)) return spawned
 
     const def = await definition($, e.subagentType)
     const sameType = (await read($, agents)).filter(a => a.type === e.subagentType).length
@@ -1847,6 +1916,22 @@ export const register: Register = (on, options) => {
     const tool = String(e.tool)
     // This mod's own dialogs ($.ui.ask) arrive as AskUserQuestion calls: not the lead's choice.
     if (tool === 'AskUserQuestion') return next(e)
+    // A council reviewer the lead launched: run in the foreground (awaited in next, outside this hook's
+    // budget), then its checked findings, and the merged verdict once all are in, follow its result.
+    const councilRole = tool === 'Agent' ? roleOfType(String((e as unknown as { subagent_type?: unknown }).subagent_type ?? '')) : null
+    if (councilRole) {
+      const ran = await next({ ...e, run_in_background: false } as typeof e)
+      // Which reviewer this call ran: the agentId its result names, else the launch this call made.
+      const res = 'result' in ran && ran.result && typeof ran.result === 'object' ? (ran.result as { agentId?: unknown }) : null
+      const ranId = typeof res?.agentId === 'string' && reviewerRoles.has(res.agentId) ? res.agentId : null
+      const byCall = launchedBy.get(e.tool_use_id)
+      // Refused at the gate: this call launched nobody, so no reviewer's result is touched.
+      if (!ranId && !byCall) return ran
+      launchedBy.delete(e.tool_use_id)
+      const note = await councilResult($, ranId ? reviewerRoles.get(ranId)! : councilRole, ran as unknown as Record<string, unknown>, ranId)
+      if ('deny' in ran && ran.deny) return { deny: `${ran.deny}\n${note}` }
+      return { ...ran, context: [...(('context' in ran && ran.context) || []), note] } as typeof ran
+    }
     const path = 'file_path' in e && typeof e.file_path === 'string' ? e.file_path : ''
     const base = path.split('/').pop() ?? ''
     if (base) {
