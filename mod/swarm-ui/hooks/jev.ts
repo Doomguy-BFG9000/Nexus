@@ -66,10 +66,10 @@ export function retryQuestion(): Question {
   }
 }
 
-/** Rate, budget and back-off; lives in the module, so a reload starts it fresh. */
+/** Rate, budget and back-off. The spend is seeded from $.state, so a reload keeps it. */
 export class Gate {
   private calls: number[] = []
-  private spent = 0
+  spent = 0
   private downUntil = 0
 
   allow(now: number): string | null {
@@ -80,9 +80,12 @@ export class Gate {
     return null
   }
 
-  record(now: number, inputTokens: number) {
+  /** Counts the call and returns what it cost. */
+  record(now: number, inputTokens: number): number {
+    const usd = (inputTokens * JEV.usdPerMtokIn) / 1_000_000
     this.calls.push(now)
-    this.spent += (inputTokens * JEV.usdPerMtokIn) / 1_000_000
+    this.spent += usd
+    return usd
   }
 
   fail(now: number) {
@@ -129,12 +132,13 @@ function parse(data: unknown, now: number): { decisions: JevDecision[]; inputTok
   const out: JevDecision[] = []
   const d = (data ?? {}) as { answers?: Record<string, unknown>; usage?: { input_tokens?: number } }
   for (const [question, raw] of Object.entries(d.answers ?? {})) {
-    const a = (raw ?? {}) as { choice?: unknown; probabilities?: Record<string, unknown> }
+    const a = (raw ?? {}) as { choice?: unknown; probabilities?: Record<string, unknown>; confidence?: unknown }
     if (typeof a.choice !== 'string') continue
     const p = a.probabilities?.[a.choice]
     // Never invent a probability the API did not return.
     if (typeof p !== 'number') continue
-    out.push({ at: now, question, choice: a.choice, p, isSharp: p >= JEV.threshold })
+    const confidence = typeof a.confidence === 'number' ? a.confidence : null
+    out.push({ at: now, question, choice: a.choice, p, confidence, isSharp: p >= JEV.threshold })
   }
   return { decisions: out, inputTokens: Number(d.usage?.input_tokens ?? 0) }
 }

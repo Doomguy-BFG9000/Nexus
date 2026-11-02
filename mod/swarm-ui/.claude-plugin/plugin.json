@@ -1,6 +1,28 @@
 {
   "name": "swarm-ui",
-  "version": "0.1.0",
-  "description": "Sonnet builds, Haiku swarms: a live lead/advisor/swarm/Jev view inside Claude Code",
-  "types": "./types/index.d.ts"
+  "version": "0.2.0",
+  "description": "Claude Code's own terminal as the Sonnet builds / Haiku swarms / advisor / Jev layout, with session-scoped model modes",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "escalation": {
+      "type": "string",
+      "title": "Mode escalation",
+      "description": "ask: before a prompt that looks like a harder task, offer a stronger mode in a dialog (it never switches on its own). off: never ask.",
+      "default": "ask",
+      "options": ["ask", "off"]
+    },
+    "classifier": {
+      "type": "boolean",
+      "title": "Haiku check when unsure",
+      "description": "When the keyword rules are unsure, ask Haiku once to rate the prompt (at most 20 times a session).",
+      "default": true
+    },
+    "motion": {
+      "type": "string",
+      "title": "Animation",
+      "description": "auto follows Claude Code's own reduceMotion setting; reduced draws no movement; full always animates.",
+      "default": "auto",
+      "options": ["auto", "reduced", "full"]
+    }
+  }
 }

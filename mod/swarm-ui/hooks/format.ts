@@ -8,6 +8,14 @@ export const C = {
   green: '#86d9a2',
   blue: '#7ea8f5',
   amber: '#e6c07b',
+  red: '#e88388',
+  // Lit frames of the event animations.
+  orangeHi: '#ffc39a',
+  purpleHi: '#d4ccff',
+  purpleBg: '#2a2b38',
+  blueHi: '#b9d0ff',
+  greenHi: '#b8f5cb',
+  freshBg: '#23242e',
 }
 
 /** `claude-sonnet-5-5` -> `sonnet 5.5`; anything else is shown as given. */
