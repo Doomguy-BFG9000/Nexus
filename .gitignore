@@ -1,0 +1,54 @@
+# Secrets and credentials: never committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keychain
+*.keychain-db
+id_rsa*
+id_ecdsa*
+id_ed25519*
+credentials*.json
+*service-account*.json
+secrets/
+credentials/
+.npmrc
+.pypirc
+.netrc
+
+# Local Claude Code and tool configuration
+.claude/settings.local.json
+.claude.json
+CLAUDE.local.md
+.mcp.json
+.firebaserc
+
+# Logs and debug output (may hold emails, paths or tokens)
+*.log
+firebase-debug.log
+
+# OS, editor and language caches
+.DS_Store
+.vscode/
+.idea/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# Local working folders, not part of the published plugin
+/artifacts/
+/brag-output/
+/src/
+/tests/
+/tools/
+
+# Type stubs Claude Code writes beside the plugin
+mod/nexus/.claude-plugin/types/
