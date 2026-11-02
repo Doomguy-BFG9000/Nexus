@@ -59,7 +59,7 @@ test('the /nexus commands are registered; /swarm names stay as deprecated aliase
 })
 
 test('every command /nexus-help lists is registered, and every /nexus subcommand it lists is handled', async ($, on) => {
-  const w = engine(on)
+  const w = engine(on, null) // text replies, so each one can be read
   await start($)
   for (const row of HELP.flatMap(s => s.rows)) {
     const [name, sub] = row.cmd.slice(1).split(' ')
@@ -72,7 +72,7 @@ test('every command /nexus-help lists is registered, and every /nexus subcommand
 })
 
 test('a legacy command does the same work and says where it moved', async ($, on) => {
-  engine(on)
+  engine(on, null)
   await start($)
   const now = await run($, 'nexus', 'agents')
   const old = await run($, 'swarm', 'agents')
@@ -105,7 +105,7 @@ test('where nothing draws, help and about come back as text', async ($, on) => {
 })
 
 test('/nexus doctor checks the install without showing secrets', async ($, on) => {
-  engine(on)
+  engine(on, null)
   await start($)
   const out = (await run($, 'nexus', 'doctor')).text!
   expect(out).toMatch(/^NEXUS doctor/)
@@ -149,4 +149,17 @@ test('the NEXUS mark moves through the whole turn and is still when idle', async
   // Still form and a moving frame differ; every frame keeps the same footprint.
   expect(plain(nexusLogo(null))).not.toEqual(plain(nexusLogo(300)))
   for (const ms of [0, 500, 1300, 2000, 2500]) expect(plain(nexusLogo(ms)).map(r => r.length)).toEqual([11, 11, 11])
+})
+
+test('in the terminal a reply is a NEXUS row: no plugin-id label, the old-name notice dimmed', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  expect(await run($, 'swarm', 'agents')).toEqual({})
+  const id = w.placed.at(-1)!
+  expect(id).toMatch(/^out-/)
+  const row = await texts($, { plugin: 'swarm-ui', component: 'Placed', surface: 'terminal', props: { id, plugin: 'swarm-ui' } })
+  expect(row).toMatch(/◉/)
+  expect(row).toMatch(/No agents this session yet\./)
+  expect(row).toMatch(/\(\/swarm is now \/nexus;/)
+  expect(row).not.toMatch(/swarm-ui:/)
 })

@@ -146,10 +146,19 @@ function Section({ el, title }: { el: El; title: string }) {
   )
 }
 
-const CMD_W = 36
+const CMD_W = 32
 
 function Row({ el, row, cmdColor = C.orange }: { el: El; row: HelpRow; cmdColor?: string }) {
   const { Box, Text } = el
+  // A command too long for its column takes its own line, never a mid-word wrap.
+  if (row.cmd.length > CMD_W - 2) {
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text color={cmdColor}>{row.cmd}</Text>
+        <Box paddingLeft={CMD_W}><Text color={C.fg}>{row.text}</Text></Box>
+      </Box>
+    )
+  }
   return (
     <Box paddingLeft={2}>
       <Box width={CMD_W} flexShrink={0}><Text color={cmdColor}>{row.cmd}</Text></Box>
@@ -201,16 +210,31 @@ export function AboutView({ el }: { el: El }) {
   )
 }
 
+/** A command's reply, drawn as a NEXUS row (Claude Code would label plain text with the plugin id). */
+export function OutputView({ el, text }: { el: El; text: string }) {
+  const { Box, Text } = el
+  const [first = '', ...rest] = text.split('\n')
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="#3a3b4a" paddingX={1}>
+      <Text><Text color={C.purple}>◉ </Text><Text bold color={C.fg}>{first}</Text></Text>
+      {rest.map(line => (
+        <Text color={/^\s*✓/.test(line) ? C.green : /^\s*!/.test(line) ? C.amber : /^\(\/swarm/.test(line) ? C.dim : C.fg}>{line || ' '}</Text>
+      ))}
+    </Box>
+  )
+}
+
 // ---- plain text, where nothing draws (claude -p, an SDK host) --------------
 export function helpText(): string {
   const out = ['N E X U S · Multi-agent command center', '']
+  const row = (r: HelpRow) => (r.cmd.length > CMD_W - 2 ? `  ${r.cmd}\n  ${''.padEnd(CMD_W)}${r.text}` : `  ${r.cmd.padEnd(CMD_W)}${r.text}`)
   for (const sec of HELP) {
     out.push(sec.title)
-    for (const r of sec.rows) out.push(`  ${r.cmd.padEnd(CMD_W)}${r.text}`)
+    for (const r of sec.rows) out.push(row(r))
     out.push('')
   }
   out.push('Keys (dashboard focused)')
-  for (const r of KEYS) out.push(`  ${r.cmd.padEnd(CMD_W)}${r.text}`)
+  for (const r of KEYS) out.push(row(r))
   return out.join('\n')
 }
 

@@ -24,7 +24,7 @@ import {
   plan,
 } from './modes'
 import { agentDetail, agentList } from './inspect'
-import { AboutView, HelpView, NEXUS_VERSION, aboutText, helpText } from './docs'
+import { AboutView, HelpView, NEXUS_VERSION, OutputView, aboutText, helpText } from './docs'
 import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
 import type { Prefs } from './prefs'
 import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
@@ -549,6 +549,21 @@ async function runCommand($: EngineInterface, which: (typeof COMMANDS)[number]['
 }
 
 let docCount = 0
+/** Replies drawn as transcript rows, by row id (module memory; a reload keeps the rows' last draw). */
+const outputs = new Map<string, string>()
+
+/** A reply as a NEXUS row in the terminal; as plain text where nothing draws. */
+async function show($: EngineInterface, out: { text?: string }): Promise<{ text?: string }> {
+  if (!out.text) return out
+  const surface = await $.session.surface().catch(() => null)
+  if (surface !== 'terminal') return out
+  docCount += 1
+  const id = `out-${docCount}`
+  outputs.set(id, out.text)
+  if (outputs.size > 100) outputs.delete(outputs.keys().next().value!)
+  await $.ui.place({ id })
+  return {}
+}
 
 /** Draws a help or about view as a row in the transcript; plain text where nothing draws. */
 async function placeDoc($: EngineInterface, kind: 'help' | 'about'): Promise<{ text?: string }> {
@@ -1128,9 +1143,9 @@ async function escalate($: EngineInterface, text: string) {
     pick = keep
   }
   if (pick === go) {
-    $.ui.log(await applyMode($, rec.id, 'approved'))
+    await show($, { text: await applyMode($, rec.id, 'approved') })
   } else if (pick === 'Choose manually') {
-    $.ui.log(await chooseMode($))
+    await show($, { text: await chooseMode($) })
   } else {
     await update($, mode, x => ({ ...x, declinedLevel: Math.max(x.declinedLevel, level) }))
     await addLog($, { who: 'mode', kind: 'info', text: `kept ${modeLabel(m)}`, detail: `${rec.label} suggested` })
@@ -1191,9 +1206,9 @@ export const register: Register = (on, options) => {
   for (const c of COMMANDS) {
     on('command.run', { command: c.name }, async ($, e) => {
       const out = await runCommand($, c.run, e.args)
-      if (!c.legacyOf) return out
+      if (!c.legacyOf) return show($, out)
       const note = `(/${c.name} is now /${c.legacyOf}; the old name will go away in a later version.)`
-      return { ...out, text: out.text ? `${out.text}\n${note}` : note }
+      return show($, { ...out, text: out.text ? `${out.text}\n${note}` : note })
     })
   }
 
@@ -1473,8 +1488,9 @@ export const register: Register = (on, options) => {
 
   // /nexus-help and /nexus-about, drawn as rows of the transcript.
   on('ui.render', { component: 'Placed' }, async ($, e, next) => {
-    if (e.props.plugin !== 'swarm-ui' || !/^(help|about)-/.test(e.props.id)) return next(e)
+    if (e.props.plugin !== 'swarm-ui' || !/^(help|about|out)-/.test(e.props.id)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
+    if (e.props.id.startsWith('out-')) return <OutputView el={{ Box, Text }} text={outputs.get(e.props.id) ?? '…'} />
     return e.props.id.startsWith('help-') ? <HelpView el={{ Box, Text }} /> : <AboutView el={{ Box, Text }} />
   })
 

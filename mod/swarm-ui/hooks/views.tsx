@@ -704,13 +704,13 @@ export function SettingsView({ el, s, act, width }: { el: El; s: Snapshot; act: 
         ),
       )}
       {SETTINGS.filter(spec => spec.range).map(spec => (
-        <Text><Text color={C.dim}>{pad(spec.key, 22)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text><Text color={C.dim}>  /nexus settings {spec.key} {spec.range![0]}-{spec.range![1]}</Text></Text>
+        <Text><Text color={C.dim}>{pad(spec.key, 22)}</Text><Text color={C.fg}>{pad(prefValue(s.prefs, spec.key), 6)}</Text><Text color={C.dim}>/nexus settings {spec.key} {spec.range![0]}-{spec.range![1]}</Text></Text>
       ))}
       <Text> </Text>
       {Button && act.isFocused ? (
         <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
       ) : (
-        <Text color={C.dim}>ctrl+x tab to edit here · /nexus settings &lt;key&gt; &lt;value&gt; · /nexus back</Text>
+        <Text color={C.dim}>click or ctrl+x tab to edit here · /nexus settings &lt;key&gt; &lt;value&gt; · b or /nexus back</Text>
       )}
     </Box>
   )
