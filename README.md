@@ -63,12 +63,16 @@ The skill doesn't install the dashboard; the two plugin commands above do. [skil
 <tr>
 <td width="50%" valign="top">
 
+<img src="mod/nexus/docs/media/role-sonnet.png" align="right" width="96" height="56" alt="">
+
 ![SONNET](https://img.shields.io/badge/SONNET-The%20Architect-eb9a6c?style=flat-square&labelColor=16171d)
 
 The lead. Plans, coordinates and builds: reads your request, edits and runs tests. Sonnet by default; Opus or Fable in stronger modes.
 
 </td>
 <td width="50%" valign="top">
+
+<img src="mod/nexus/docs/media/role-haiku.png" align="right" width="96" height="56" alt="">
 
 ![HAIKU](https://img.shields.io/badge/HAIKU-The%20Workforce-7ea8f5?style=flat-square&labelColor=16171d)
 
@@ -79,12 +83,16 @@ Parallel subagents executing delegated work: mapping a repo, searching, reviewin
 <tr>
 <td width="50%" valign="top">
 
+<img src="mod/nexus/docs/media/role-opus.png" align="right" width="96" height="56" alt="">
+
 ![OPUS](https://img.shields.io/badge/OPUS-The%20Advisor-a99cf2?style=flat-square&labelColor=16171d)
 
 The model the lead consults before difficult decisions. It reads the session and never writes code. Opus 5.5 in Balanced; Fable 5.1 in the stronger modes.
 
 </td>
 <td width="50%" valign="top">
+
+<img src="mod/nexus/docs/media/role-jev.png" align="right" width="96" height="56" alt="">
 
 ![JEV](https://img.shields.io/badge/JEV-The%20Router-86d9a2?style=flat-square&labelColor=16171d)
 
