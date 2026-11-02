@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
-import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, SwarmAgent, View } from '../types'
+import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, SwarmAgent, Usage, View } from '../types'
 import { C, compact, elapsed, modelLabel, role } from './format'
 import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
@@ -23,6 +23,8 @@ import {
 import { agentDetail, agentList } from './inspect'
 import { DEFAULT_PREFS, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
 import type { Prefs } from './prefs'
+import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
+import type { ModelRow } from './telemetry'
 import { Band, PaneCompact, PaneFull, PaneList, SpinnerLine, isAnimating } from './views'
 import type { Actions, Snapshot } from './views'
 
@@ -59,6 +61,15 @@ export const agents = atom(
 /** What the pane shows: the diagram, or one agent, settings, usage or Cache Guard in detail. */
 /** Dashboard preferences: loaded from $.store at start, written back on each change. */
 export const prefs = atom({ plugin: 'swarm-ui', key: 'prefs' } as const, DEFAULT_PREFS as Prefs, { shape: 'prefs-1' })
+
+export const usage = atom(
+  { plugin: 'swarm-ui', key: 'usage' } as const,
+  { readAt: null, tokens: null, window: null, percent: null, costUsd: null, limits: [], plan: null, compactions: 0 } as Usage,
+  { shape: 'usage-1' },
+)
+
+/** Tokens by the model that answered, each request counted once. */
+export const models = atom({ plugin: 'swarm-ui', key: 'models' } as const, {} as Record<string, ModelRow>, { shape: 'models-1' })
 
 export const view = atom({ plugin: 'swarm-ui', key: 'view' } as const, { kind: 'diagram', ref: null } as View, { shape: 'view-1' })
 
@@ -141,6 +152,8 @@ let routing: Jev['routing'] = 'observe'
 /** The file the last hint named, until the lead's next read. */
 let pendingHint: string | null = null
 const gate = new Gate()
+/** Requests already counted (turn.step results), so a repeat is never added twice. */
+const counted = new Set<string>()
 const history: string[] = []
 const files: string[] = []
 
@@ -183,7 +196,7 @@ async function frame($: EngineInterface) {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot> {
-  const [l, a, list, j, rows, m, f, r, t, v, pr, now] = await Promise.all([
+  const [l, a, list, j, rows, m, f, r, t, v, pr, us, md, now] = await Promise.all([
     read($, lead),
     read($, advisor),
     read($, agents),
@@ -195,9 +208,69 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
     read($, tick),
     read($, view),
     read($, prefs),
+    read($, usage),
+    read($, models),
     $.clock.now(),
   ])
-  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, now }
+  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, usage: us, models: md, now }
+}
+
+/** Re-reads Claude Code's own usage figures: free (no breakdown asked), no request is made. */
+async function refreshUsage($: EngineInterface) {
+  try {
+    const u = await $.session.usage()
+    const at = await $.clock.now()
+    await update($, usage, x => ({
+      ...x,
+      readAt: u.rateLimits.length || u.context.tokens !== undefined ? at : x.readAt,
+      tokens: u.context.tokens ?? x.tokens,
+      window: u.context.window || x.window,
+      percent: u.context.percent ?? x.percent,
+      costUsd: u.cost?.usd ?? x.costUsd,
+      limits: u.rateLimits.length ? u.rateLimits.map(r => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt ?? null })) : x.limits,
+    }))
+  } catch {
+    // figures stay as they were; freshness shows their age
+  }
+}
+
+/** Counts one request's tokens under the model that answered, once. */
+async function countStep($: EngineInterface, key: string, model: string | undefined, u: Parameters<typeof addUsage>[2] | null, isAgent: boolean) {
+  if (!u || !model || counted.has(key)) return
+  counted.add(key)
+  if (counted.size > 5000) counted.clear()
+  await update($, models, rows => addUsage(rows, model, u, isAgent))
+}
+
+/** /swarm usage: every figure with its source and age. */
+async function usageText($: EngineInterface): Promise<string> {
+  await refreshUsage($)
+  const [u, md, j, now] = await Promise.all([read($, usage), read($, models), read($, jev), $.clock.now()])
+  const fresh = freshness(u.readAt, now)
+  const fable = u.limits.find(l => /fable/i.test(l.kind))
+  const lines = [
+    `Usage${u.plan ? ` · ${u.plan}` : ''} (plan figures as of ${fresh.label}${fresh.isStale ? ', STALE: they refresh with the next response' : ''})`,
+    ...(u.limits.length
+      ? orderLimits(u.limits).map(l => `  ${limitLabel(l.kind).padEnd(10)} ${String(l.percentUsed).padStart(5)}% used   ${resetLabel(l.resetsAt, now)}   [${l.kind}]`)
+      : ['  no rate-limit windows reported (API key, cloud provider, or no response yet)']),
+    `  fable 7d   ${fable ? 'shown above' : 'not reported by Claude Code for this account'}`,
+    u.plan ? '' : '  plan: not identified (Claude Code does not tell a plugin your plan; nothing is guessed)',
+    '',
+    `Context (main thread)  ${u.tokens === null ? 'N/A' : `${u.tokens.toLocaleString('en-US')} / ${(u.window ?? 0).toLocaleString('en-US')} tokens · ${u.percent ?? 'N/A'}% used · ${((u.window ?? 0) - u.tokens).toLocaleString('en-US')} left`}`,
+    `Compactions            ${u.compactions}`,
+    `Session cost           ${usd(u.costUsd)} API est. (Claude Code's /cost ledger at API prices; a subscription is not charged this)`,
+    `Jev spend              ${usd(j.spentUsd)} est. (TypeSafe, from reported input tokens)`,
+    '',
+    'Tokens by model (each request counted once; per-model $ is not priced by Claude Code):',
+    ...(Object.keys(md).length
+      ? Object.entries(md).map(
+          ([m, r]) =>
+            `  ${modelLabel(m).padEnd(11)} ${String(r.requests).padStart(4)} req (${r.leadRequests} lead, ${r.agentRequests} agents)  in ${r.input}  out ${r.output}  cache read ${r.cacheRead}  write ${r.cacheWrite}`,
+        )
+      : ['  none yet']),
+    '  advisor: not included; Claude Code does not report advisor tokens to plugins (its cost is in the session total).',
+  ]
+  return lines.filter(l => l !== '').join('\n').replace(/\n\n\n/g, '\n\n')
 }
 
 /** Preferences from the plugin's store, migrated; the first run seeds them from the plugin options. */
@@ -736,6 +809,15 @@ export const register: Register = (on, options) => {
     }
     await loadPrefs($)
     await syncMotion($)
+    // The plan only where Claude Code itself answers it: never guessed from a model.
+    try {
+      const id = await $.session.identity()
+      const plan = !id.deny && id.organizationType ? id.organizationType : null
+      await update($, usage, u => ({ ...u, plan }))
+    } catch {
+      // not available to this plugin: the strip reads "usage"
+    }
+    await refreshUsage($)
 
     await $.command.register({
       name: 'swarm',
@@ -769,6 +851,7 @@ export const register: Register = (on, options) => {
       return { text: agentDetail(agent, await $.clock.now()) }
     }
     if (sub === 'settings') return { text: await settingsCommand($, arg) }
+    if (sub === 'usage') return { text: await usageText($) }
     if (sub === 'layout') return { text: await settingsCommand($, `layout ${arg}`) }
     if (sub === 'back') {
       await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
@@ -829,7 +912,10 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (!e.agentId) await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
+    if (!e.agentId) {
+      await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
+      await refreshUsage($)
+    }
     else if (e.reason === 'aborted' || e.isAborted) await finishAgent($, e.agentId, 'cancelled', 'interrupted')
     else if (e.reason === 'error') await finishAgent($, e.agentId, 'failed', 'the run ended on an error')
     else if (e.reason === 'refusal') await finishAgent($, e.agentId, 'failed', 'the model refused')
@@ -841,6 +927,7 @@ export const register: Register = (on, options) => {
       const result = yield* next(e)
       const id = e.agentId
       const u = result.usage
+      await countStep($, stepKey(id, e.turnId, e.index), u?.model, u, true)
       await patchAgent($, id, a => ({
         ...a,
         steps: a.steps + 1,
@@ -870,19 +957,21 @@ export const register: Register = (on, options) => {
       }
     }
     const result = yield* next(req)
-    const usage = result.usage
+    const usage_ = result.usage
+    await countStep($, stepKey(undefined, e.turnId, e.index), usage_?.model, usage_, false)
+    await refreshUsage($)
 
-    const context = usage
-      ? usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens + usage.output_tokens
+    const context = usage_
+      ? usage_.input_tokens + usage_.cache_read_input_tokens + usage_.cache_creation_input_tokens + usage_.output_tokens
       : null
     await update($, lead, l => ({
       ...l,
-      model: usage?.model ?? l.model,
+      model: usage_?.model ?? l.model,
       requested: req.model,
       effort: typeof req.effort === 'string' ? req.effort : req.effort === undefined ? l.effort : String(req.effort),
       steps: l.steps + 1,
-      outputTokens: l.outputTokens + (usage?.output_tokens ?? 0),
-      turnOutputTokens: l.turnOutputTokens + (usage?.output_tokens ?? 0),
+      outputTokens: l.outputTokens + (usage_?.output_tokens ?? 0),
+      turnOutputTokens: l.turnOutputTokens + (usage_?.output_tokens ?? 0),
       // isWaiting is left alone: tools start while a step still streams, so a
       // dialog may already be up. It clears when its call settles.
       contextTokens: context ?? l.contextTokens,
@@ -911,6 +1000,13 @@ export const register: Register = (on, options) => {
     }
     return result
   })
+
+  // Counted, never changed: the compaction runs as the engine decides.
+  on('session.compact', async ($, e, next) => {
+    const out = await next(e)
+    if (!e.agentId && !('skip' in out && out.skip)) await update($, usage, u => ({ ...u, compactions: u.compactions + 1 }))
+    return out
+  }).catch(($, e, next) => next(e))
 
   // ---- subagents ----------------------------------------------------------
   on('agent.spawn', async ($, e, next) => {

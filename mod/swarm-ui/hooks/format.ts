@@ -16,6 +16,9 @@ export const C = {
   blueHi: '#b9d0ff',
   greenHi: '#b8f5cb',
   freshBg: '#23242e',
+  // Cache Guard and the usage bars: a restrained teal.
+  teal: '#6cc4bf',
+  tealDim: '#3f7d7a',
 }
 
 /** `claude-sonnet-5-5` -> `sonnet 5.5`; anything else is shown as given. */

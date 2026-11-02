@@ -1,10 +1,12 @@
-import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent, View } from '../types'
+import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, SwarmAgent, Usage, View } from '../types'
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId } from './modes'
 import { SETTINGS, prefValue } from './prefs'
 import type { Prefs } from './prefs'
+import { freshness, limitLabel, orderLimits, resetLabel, tone, usd } from './telemetry'
+import type { ModelRow } from './telemetry'
 
 // The elements come from the surface's table ($.ui.resolve(e)); views take
 // them as an argument so they stay plain functions of the state.
@@ -31,6 +33,8 @@ export type Snapshot = {
   tick: number
   view: View
   prefs: Prefs
+  usage: Usage
+  models: Record<string, ModelRow>
   now: number
 }
 
@@ -336,6 +340,70 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   )
 }
 
+const TONE: Record<ReturnType<typeof tone>, string> = { normal: C.teal, warn: C.amber, alert: C.red, none: C.dim }
+
+/** The one telemetry line: the main thread's context now, and the session's API-priced total. */
+export function TelemetryLine({ el, s }: { el: El; s: Snapshot }) {
+  const { Text } = el
+  const u = s.usage
+  const t = s.prefs.telemetry
+  const parts: any[] = []
+  if (t.context) {
+    parts.push(
+      u.tokens === null || !u.window ? (
+        <Text color={C.dim}>context N/A</Text>
+      ) : (
+        <Text>
+          <Text color={C.dim}>context </Text>
+          <Text color={TONE[tone(u.percent)]}>{compact(u.tokens)} / {compact(u.window)}</Text>
+          <Text color={C.dim}> · {compact(u.window - u.tokens)} left · {u.percent ?? 'N/A'}%</Text>
+        </Text>
+      ),
+    )
+  }
+  if (t.cost) parts.push(<Text><Text color={C.dim}>session </Text><Text color={C.fg}>{usd(u.costUsd)}</Text><Text color={C.dim}> API est.</Text></Text>)
+  if (t.tokens) {
+    const lead = Object.entries(s.models).filter(([, r]) => r.leadRequests > 0)
+    const total = lead.reduce((n, [, r]) => n + r.cacheRead, 0)
+    parts.push(<Text color={C.dim}>cache read {compact(total)}</Text>)
+  }
+  if (u.compactions > 0) parts.push(<Text color={C.dim}>{u.compactions} compaction{u.compactions === 1 ? '' : 's'}</Text>)
+  if (parts.length === 0) return null
+  return <Text>{parts.flatMap((p, i) => (i === 0 ? [p] : [<Text color={C.dim}>   </Text>, p]))}</Text>
+}
+
+/** USAGE: the plan windows Claude Code reported, as small bars; nothing is guessed. */
+export function UsageBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+  const { Box, Text } = el
+  if (!s.prefs.telemetry.usage) return null
+  const u = s.usage
+  const fresh = freshness(u.readAt, s.now)
+  const limits = orderLimits(u.limits)
+  const barW = Math.max(6, Math.min(16, width - 40))
+  return (
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={C.tealDim} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text><Text bold color={C.teal}>USAGE</Text><Text color={C.dim}> · {u.plan ?? 'plan not reported'}</Text></Text>
+        <Text color={fresh.isStale ? C.amber : C.dim}>{fresh.isStale && u.readAt !== null ? `stale · ${fresh.label}` : fresh.label}</Text>
+      </Box>
+      {limits.length === 0 && <Text color={C.dim}>no limits reported yet: they arrive with responses · /swarm usage</Text>}
+      {limits.map(l => {
+        const [full, rest] = bar(l.percentUsed / 100, barW)
+        const color = fresh.isStale ? C.dim : TONE[tone(l.percentUsed)]
+        return (
+          <Text>
+            <Text color={C.fg}>{pad(limitLabel(l.kind), 10)}</Text>
+            <Text color={color}>{full}</Text>
+            <Text color={C.dim}>{rest}</Text>
+            <Text color={color}> {String(Math.round(l.percentUsed)).padStart(3)}%</Text>
+            <Text color={C.dim}>  {resetLabel(l.resetsAt, s.now)}</Text>
+          </Text>
+        )
+      })}
+    </Box>
+  )
+}
+
 /** Jev on one line: the latest answer and the routing state. */
 function JevLine({ el, s }: { el: El; s: Snapshot }) {
   const { Text } = el
@@ -525,6 +593,7 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
       <Box justifyContent="center" width={width}>
         <Box width={Math.min(width, 46)} flexDirection="column"><LeadBox el={el} s={s} /></Box>
       </Box>
+      <Box justifyContent="center"><TelemetryLine el={el} s={s} /></Box>
       <Box justifyContent="center"><Text color={C.orange}>┆</Text></Box>
       {s.prefs.jev === 'bars' && <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width, 66)} /></Box>}
       {s.prefs.jev === 'line' && <Box justifyContent="center"><JevLine el={el} s={s} /></Box>}
@@ -556,6 +625,7 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
           <Box justifyContent="center"><Text color={C.fg}>review + verify</Text></Box>
         </Box>
       </Box>
+      <Box marginTop={1}><UsageBox el={el} s={s} width={width} /></Box>
     </Box>
   )
 }
@@ -613,6 +683,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
         </Text>
       </Box>
       <LeadBox el={el} s={s} />
+      <TelemetryLine el={el} s={s} />
       {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
       {s.prefs.jev === 'line' && <JevLine el={el} s={s} />}
       {pickAgents(s.agents).map(agent => (
@@ -620,6 +691,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
       ))}
       {s.agents.length === 0 && <Text color={C.dim}>no subagents yet</Text>}
       <InspectBar el={el} s={s} act={act} />
+      <UsageBox el={el} s={s} width={width} />
     </Box>
   )
 }
@@ -691,7 +763,25 @@ export function Band({ el, s, width, rows }: { el: El; s: Snapshot; width: numbe
         </Box>
       )}
       <StatusRow el={el} s={s} />
+      {s.prefs.layout === 'minimal' && <MinimalStrip el={el} s={s} />}
     </Box>
+  )
+}
+
+/** Minimal layout: the lead, context, cost and plan windows on one line. */
+function MinimalStrip({ el, s }: { el: El; s: Snapshot }) {
+  const { Text } = el
+  const fresh = freshness(s.usage.readAt, s.now)
+  return (
+    <Text>
+      <Text color={C.orange}>{modelLabel(s.lead.model)}</Text>
+      <Text color={C.dim}>   </Text>
+      <TelemetryLine el={el} s={s} />
+      {s.prefs.telemetry.usage &&
+        orderLimits(s.usage.limits).slice(0, 3).map(l => (
+          <Text color={fresh.isStale ? C.dim : TONE[tone(l.percentUsed)]}>   {limitLabel(l.kind)} {Math.round(l.percentUsed)}%</Text>
+        ))}
+    </Text>
   )
 }
 

@@ -68,6 +68,21 @@ export type SwarmAgent = {
   toolUseId: string | null
 }
 
+/** What $.session.usage() last said, and when it was read. */
+export type Usage = {
+  readAt: number | null
+  /** Main thread: input tokens of the last response, the window, the percentage. */
+  tokens: number | null
+  window: number | null
+  percent: number | null
+  /** Claude Code's own API-priced total (/cost); not a subscription charge. */
+  costUsd: number | null
+  limits: { kind: string; percentUsed: number; resetsAt: string | null }[]
+  /** The plan as the login names it, only where Claude Code tells a mod; else null. */
+  plan: string | null
+  compactions: number
+}
+
 export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache'; ref: string | null }
 
 export type JevDecision = {
@@ -154,6 +169,8 @@ declare module 'claude-code' {
       agents: Shaped<SwarmAgent[]>
       view: Shaped<View>
       prefs: Shaped<import('../hooks/prefs').Prefs>
+      usage: Shaped<Usage>
+      models: Shaped<Record<string, import('../hooks/telemetry').ModelRow>>
       jev: Shaped<Jev>
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>
