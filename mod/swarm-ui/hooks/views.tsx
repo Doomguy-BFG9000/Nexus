@@ -38,6 +38,8 @@ export type Snapshot = {
   usage: Usage
   models: Record<string, ModelRow>
   guard: Guard
+  /** A width the person set by hand, which Claude Code keeps over any request. */
+  keptWidth?: number | null
   now: number
 }
 
@@ -251,7 +253,7 @@ function ModelLegend({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       {s.prefs.jev !== 'hidden' && row(C.green, 'jev', 'router')}
       <Text color="#3a3b4a">{'─'.repeat(Math.max(0, width - 4))}</Text>
       <Text><Text color={C.amber}>◈ </Text><Text color={C.dim}>Mode: </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
-      <Text color={C.dim}>{fit(`↔ /swarm width ${s.prefs.paneColumns}`, inner)}</Text>
+      <Text color={C.dim}>{fit(s.keptWidth ? '↔ drag edge to resize' : `↔ /swarm width ${s.prefs.paneColumns}`, inner)}</Text>
     </Box>
   )
 }

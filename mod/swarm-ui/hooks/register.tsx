@@ -160,6 +160,8 @@ let pendingHint: string | null = null
 const gate = new Gate()
 /** Requests already counted (turn.step results), so a repeat is never added twice. */
 const counted = new Set<string>()
+/** A pane width the person set by hand (Claude Code keeps it; it beats any request). */
+let keptWidth: number | null = null
 /** Cache Guard's one timer: re-arming always cancels the last, so there is never a second. */
 let guardTimer: Timer | null = null
 let isBeating = false
@@ -222,7 +224,7 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
     read($, guard),
     $.clock.now(),
   ])
-  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, usage: us, models: md, guard: gd, now }
+  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, usage: us, models: md, guard: gd, keptWidth, now }
 }
 
 /** Re-reads Claude Code's own usage figures: free (no breakdown asked), no request is made. */
@@ -493,11 +495,12 @@ async function widthCommand($: EngineInterface, arg: string): Promise<string> {
   const columns = Math.round(Math.min(200, Math.max(40, want)))
   await applyPrefs($, p, { ...p, paneColumns: columns })
   const kept = await keptDockColumns($)
-  if (kept !== null && kept !== columns) {
+  keptWidth = kept
+  if (kept !== null) {
     return [
-      `NEXUS asked for ${columns} columns (saved), but Claude Code is keeping a width set by hand: ${kept} columns, and that always wins.`,
-      'To change it: drag the pane\'s left edge with the mouse, or ctrl+x ←/→ while the pane is focused.',
-      'To hand the width back to /swarm width, remove "dockColumns" under "pluginPanes" in ~/.claude.json (Claude Code\'s own file; NEXUS never edits it).',
+      `Not resized. The pane is ${kept} columns because you resized it by hand once, and Claude Code always keeps a hand-set width over what a plugin asks for.`,
+      'Resize it by dragging the pane\'s left edge, or click the pane and press ctrl+x then ← (wider) or → (narrower).',
+      `To let /swarm width control it again: quit every Claude Code window, then remove "dockColumns" from "pluginPanes" in ~/.claude.json. (${columns} is saved for that.)`,
     ].join('\n')
   }
   return `Pane width → ${columns} columns (Claude Code caps a docked pane at 45% of the terminal; saved for later sessions).`
@@ -1008,6 +1011,7 @@ export const register: Register = (on, options) => {
       await update($, jev, x => ({ ...x, status: 'off' as const, reason: 'no key: TYPESAFE_API_KEY or Keychain claude-swarm-typesafe' }))
     }
     await loadPrefs($)
+    keptWidth = await keptDockColumns($)
     await syncMotion($)
     // The plan only where Claude Code itself answers it: never guessed from a model.
     try {

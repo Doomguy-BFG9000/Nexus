@@ -183,6 +183,12 @@ test('/swarm width says so when a width set by hand in Claude Code is in charge'
   })
   await start($)
   const out = (await run($, 'width 120')).text
-  expect(out).toMatch(/asked for 120 columns \(saved\), but Claude Code is keeping a width set by hand: 101 columns/)
-  expect(out).toMatch(/NEXUS never edits it/)
+  expect(out).toMatch(/^Not resized\. The pane is 101 columns because you resized it by hand once/)
+  expect(out).toMatch(/drag(ging)? the pane's left edge/)
+  expect(out).toMatch(/quit every Claude Code window, then remove "dockColumns"/)
+  // The legend stops advertising a command that cannot work.
+  const ui = await $.ui.mount({ plugin: 'swarm-ui', component: 'Pane', requestId: 'swarm', surface: 'terminal', props: { title: 'swarm', isFocused: false, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } } as const)
+  const all = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text ?? '').join('\n')
+  await ui.unmount()
+  expect(all).toMatch(/↔ drag edge to resize/)
 })
