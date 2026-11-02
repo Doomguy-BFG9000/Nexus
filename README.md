@@ -39,12 +39,42 @@ npx skills add muhzain05/Nexus --skill nexus -g -a claude-code
 
 ## One terminal. Four roles.
 
-| | |
-| --- | --- |
-| **Sonnet** | Leads, codes, coordinates |
-| **Haiku** | Searches and audits in parallel |
-| **Opus** | Advises on difficult decisions |
-| **Jev** | Optional next-step routing |
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="mod/nexus/docs/media/role-sonnet.png" width="100" align="right" alt="Sonnet orbit">
+
+**SONNET · Lead**
+
+Plans, writes code, and coordinates the team.
+</td>
+<td width="50%" valign="top">
+<img src="mod/nexus/docs/media/role-haiku.png" width="100" align="right" alt="Haiku orbit">
+
+**HAIKU · Agents**
+
+Searches, explores, and audits in parallel.
+</td>
+</tr>
+<tr>
+<td valign="top">
+<img src="mod/nexus/docs/media/role-opus.png" width="100" align="right" alt="Opus orbit">
+
+**OPUS · Advisor**
+
+Reviews difficult decisions when consulted.
+</td>
+<td valign="top">
+<img src="mod/nexus/docs/media/role-jev.png" width="100" align="right" alt="Jev orbit">
+
+**JEV · Router**
+
+Optional assistance with read-only next steps.
+</td>
+</tr>
+</table>
+
+<sub>Shown in Balanced mode. Other modes can change the lead and advisor. [Explore model modes](mod/nexus/docs/dashboard.md#model-modes-in-detail).</sub>
 
 <div align="center">
 
