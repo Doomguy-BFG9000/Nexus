@@ -3,7 +3,7 @@
 // register.tsx; a test checks that.
 import { C } from './format'
 
-export const NEXUS_VERSION = '0.6.0'
+export const NEXUS_VERSION = '0.7.0'
 export const AUTHOR = 'Muhammad Zain'
 
 type El = { Box: any; Text: any }
