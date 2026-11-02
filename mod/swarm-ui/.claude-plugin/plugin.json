@@ -1,0 +1,6 @@
+{
+  "name": "swarm-ui",
+  "version": "0.1.0",
+  "description": "Sonnet builds, Haiku swarms: a live lead/advisor/swarm/Jev view inside Claude Code",
+  "types": "./types/index.d.ts"
+}

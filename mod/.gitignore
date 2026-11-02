@@ -1,0 +1,4 @@
+.claude-plugin/types/
+swarm-ui/.claude-plugin/types/
+.DS_Store
+*.log
