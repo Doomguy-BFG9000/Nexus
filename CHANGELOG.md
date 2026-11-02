@@ -2,8 +2,9 @@
 
 ## 0.4.1 (2026-11-02): NEXUS polish
 - NEXUS branding in the pane: a centred spaced wordmark with its subtitle beneath, and room above it. Command and plugin ids are unchanged.
-- The running models and the mode form one horizontal legend along the bottom of the pane.
-- The JEV box is centred and narrower, with a centred title row.
+- The running models form a vertical legend at the bottom of the left column, ending with `Mode: Balanced` and the resize keys (ctrl+x ←/→ while the pane has focus; dragging works too, up to Claude Code's 45% limit).
+- Every full-width element in the diagram (advisor link, JEV, Cache Guard, USAGE) shares the card grid's edges.
+- The NEXUS emblem (a hub linked to four role-coloured nodes) appears at the right of the header and as the plugin icon.
 - Haiku cards are fixed-size (7 rows). The orbit sits in the top-right corner as a one-row edge-on orbit, the status row is always last, and text is cut with `…`. The floating orbit row above the cards is gone.
 - The advisor panel is grouped into bands (model and status, orbit, stats with placeholders, pair check and recent calls) and ends with its content. At rest, the orbit shows a dim constellation instead of a single glyph.
 - The lead orbit is narrower; the Jev header's decision arc is one row.

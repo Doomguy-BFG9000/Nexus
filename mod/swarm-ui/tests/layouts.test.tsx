@@ -125,18 +125,21 @@ test('NEXUS header: the wordmark and running models; the old banner is gone', as
   await start($)
   const all = await texts($, 120)
   expect(all).toMatch(/N E X U S/)
-  expect(all).toMatch(/sonnet 5\.5 lead/)
+  expect(all).toMatch(/◉/) // the emblem's hub
   expect(all).not.toMatch(/CLAUDE CODE SWARM|BUILDS|SWARMS/)
 })
 
-test('NEXUS sits centred on top with its subtitle beneath; the model legend runs along the bottom', async ($, on) => {
+test('NEXUS sits on top with its subtitle beneath; the model legend is vertical under the advisor', async ($, on) => {
   engine(on)
   await start($)
   const all = await texts($, 120)
   const at = (re: RegExp) => all.search(re)
   expect(at(/N E X U S/)).toBeLessThan(at(/multi-agent command center/))
   expect(at(/multi-agent command center/)).toBeLessThan(at(/OPUS 5\.5/))
-  expect(at(/USAGE/)).toBeLessThan(at(/sonnet 5\.5 lead/))
-  expect(at(/sonnet 5\.5 lead/)).toBeLessThan(at(/opus 5\.5 advisor/))
-  expect(all).toMatch(/◈ \n?Balanced/)
+  // Under the advisor panel, one model per line, ending with the mode and the resize keys.
+  expect(at(/recent/)).toBeLessThan(at(/■ sonnet 5\.5\n/))
+  expect(all).toMatch(/■ sonnet 5\.5\n[\s\S]{0,40}lead\n■ haiku/)
+  expect(all).toMatch(/◈ Mode: Balanced/)
+  expect(all).toMatch(/ctrl\+x ←\/→ resize/)
+  expect(at(/ctrl\+x ←\/→ resize/)).toBeLessThan(at(/◂ advisor/))
 })

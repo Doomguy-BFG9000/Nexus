@@ -193,33 +193,53 @@ function Track({ el, width, dots, color }: { el: El; width: number; dots: number
   return <Text>{parts}</Text>
 }
 
+/** The NEXUS emblem: a hub linked to four nodes, one per role's colour. */
+function Emblem({ el }: { el: El }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column">
+      <Text><Text color={C.orange}>•╲</Text><Text> </Text><Text color={C.blue}>╱•</Text></Text>
+      <Text><Text>  </Text><Text bold color={C.fg}>◉</Text><Text>  </Text></Text>
+      <Text><Text color={C.purple}>•╱</Text><Text> </Text><Text color={C.green}>╲•</Text></Text>
+    </Box>
+  )
+}
+
 function Header({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
-      <Box justifyContent="center"><Text bold color={C.fg}>N E X U S</Text></Box>
-      <Box justifyContent="center"><Text color={C.dim}>multi-agent command center</Text></Box>
+      <Box width={width} alignItems="center">
+        <Box width={7} />
+        <Box flexDirection="column" flexGrow={1} alignItems="center">
+          <Text bold color={C.fg}>N E X U S</Text>
+          <Text color={C.dim}>multi-agent command center</Text>
+        </Box>
+        <Box width={7} justifyContent="flex-end" paddingRight={1}><Emblem el={el} /></Box>
+      </Box>
       <Text color={C.dim}>{'─'.repeat(width)}</Text>
     </Box>
   )
 }
 
-/** The running models and the mode, in one row along the bottom of the pane. */
+/** The running models and the mode, one per line: the bottom of the left column. */
 function ModelLegend({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
-  const swatch = (color: string, label: string) => (
-    <Text><Text color={color}>■ </Text><Text color={C.fg}>{label}</Text></Text>
+  const row = (color: string, model: string, part: string) => (
+    <Box justifyContent="space-between">
+      <Text><Text color={color}>■ </Text><Text color={C.fg}>{model}</Text></Text>
+      <Text color={C.dim}>{part}</Text>
+    </Box>
   )
   return (
-    <Box flexDirection="column" width={width} marginTop={1}>
-      <Text color={C.dim}>{'─'.repeat(width)}</Text>
-      <Box justifyContent="space-between" paddingX={1}>
-        {swatch(C.orange, `${modelLabel(s.lead.model)} lead`)}
-        {swatch(C.blue, `${haikuModel(s)} swarm`)}
-        {swatch(C.purple, `${advisorLabel(s)} advisor`)}
-        {s.prefs.jev !== 'hidden' && swatch(C.green, 'jev')}
-        <Text><Text color={C.amber}>◈ </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
-      </Box>
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor="#3a3b4a" paddingX={1}>
+      {row(C.orange, modelLabel(s.lead.model), 'lead')}
+      {row(C.blue, haikuModel(s), 'swarm')}
+      {row(C.purple, advisorLabel(s), 'advisor')}
+      {s.prefs.jev !== 'hidden' && row(C.green, 'jev', 'router')}
+      <Text color="#3a3b4a">{'─'.repeat(Math.max(0, width - 4))}</Text>
+      <Text><Text color={C.amber}>◈ </Text><Text color={C.dim}>Mode: </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
+      <Text color={C.dim}>ctrl+x ←/→ resize</Text>
     </Box>
   )
 }
@@ -689,11 +709,13 @@ export function pickAgents(list: SwarmAgent[]): SwarmAgent[] {
 /** Where box `i` of three sits along a track, 0..1. */
 const SLOT_X = [0, 0.5, 1]
 
-function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
+function Diagram({ el, s, width: room, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
   const { Box, Text } = el
   const shown = pickAgents(s.agents)
   const slots = ['search', 'grep', 'audit']
-  const boxW = Math.floor((width - 2) / 3)
+  const boxW = Math.floor((room - 2) / 3)
+  // Everything full-width shares the card grid's edges.
+  const width = boxW * 3 + 2
   const branch = boxW * 3 + 2
   const third = Math.floor(branch / 6)
   const trackW = branch - third * 2 - 1
@@ -726,7 +748,7 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
       </Box>
       <Box justifyContent="center"><TelemetryLine el={el} s={s} /></Box>
       <Box justifyContent="center"><Text color={C.orange}>┆</Text></Box>
-      {s.prefs.jev === 'bars' && <Box justifyContent="center"><JevBox el={el} s={s} width={Math.min(width - 4, 56)} /></Box>}
+      {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
       {s.prefs.jev === 'line' && <Box justifyContent="center"><JevLine el={el} s={s} /></Box>}
       <Box justifyContent="center"><Text color={C.blue}>●</Text></Box>
       <Box justifyContent="center">
@@ -770,7 +792,10 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
     <Box flexDirection="column" width={width}>
       <Header el={el} s={s} width={width} />
       <Box gap={2} marginTop={1}>
-        <AdvisorColumn el={el} s={s} />
+        <Box flexDirection="column" justifyContent="space-between" width={ADVISOR_W}>
+          <AdvisorColumn el={el} s={s} />
+          <ModelLegend el={el} s={s} width={ADVISOR_W} />
+        </Box>
         {s.view.kind === 'agent' ? (
           <AgentDetail el={el} a={s.agents.find(a => a.id === s.view.ref)} s={s} act={act} width={right} />
         ) : s.view.kind === 'settings' ? (
@@ -779,7 +804,6 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
           <Diagram el={el} s={s} width={right} act={act} />
         )}
       </Box>
-      <ModelLegend el={el} s={s} width={width} />
     </Box>
   )
 }
