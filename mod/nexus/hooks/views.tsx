@@ -463,7 +463,7 @@ function CouncilColumn({ el, s }: { el: El; s: Snapshot }) {
           <Text color={C.dim}>council </Text>
           <Text bold color={activation === 'on' ? C.amber : C.purple}>{activation === 'on' ? 'ON · all three' : 'ADAPTIVE · ≤1'}</Text>
         </Text>
-        {activation === 'on' && <Text color={C.amber}>{fit('⚠ Higher token usage', inner)}</Text>}
+        {activation === 'on' && <Text color={C.amber}>{ON_WARNING}</Text>}
         <Text color={C.dim}>
           {fit(
             cp === null

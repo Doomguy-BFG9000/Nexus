@@ -94,7 +94,7 @@ A model's recommendation (Jev, or a local fine-tuned decision model later) may o
 
 ## Verification
 
-**Automated** (`claude plugin test mod/nexus`): 159 tests. The 35 Council tests are mocked engine events, not live runs. They cover:
+**Automated** (`claude plugin test mod/nexus`): 160 tests. The 36 Council tests are mocked engine events, not live runs. They cover:
 - mode transitions and the Adaptive default;
 - the advisor's pick, none, an unreadable pick, and a missing advisor;
 - On launching all three;
@@ -111,7 +111,7 @@ A model's recommendation (Jev, or a local fine-tuned decision model later) may o
 **Live** (Claude Code 2.1.316, throwaway repo):
 - **Model:** the reviewers and the lead ran on **Haiku** through the developer override `NEXUS_COUNCIL_MODEL`, to keep cost low. Opus reviewers haven't been run live yet.
 - **Launch:** the lead launched three reviewers in one message, and they started within 0.6s of each other and ran concurrently.
-- **Snapshot:** the snapshot task replaced the lead's prompt.
+- **Snapshot:** each reviewer's first message, in its own transcript, was the snapshot task with the snapshot hash, not the lead's prompt.
 - **Verdict:** results came back per reviewer, then the merged verdict.
 - **Gate:** an extra launch was refused.
 - **Tree:** nothing was written.
@@ -129,6 +129,9 @@ A model's recommendation (Jev, or a local fine-tuned decision model later) may o
 - **Redaction covers NEXUS's verdict and dashboard only.** A reviewer's raw answer, shown to the lead by Claude Code before NEXUS's verdict, isn't rewritten.
 - **Same model, not independent proof.** Three Opus reviewers agreeing isn't independent validation; the lead is told to verify.
 - **The reviewer tool is visible in Off mode.** Plugin-registered tools can't be withdrawn, so in Off the council tool replies "Council is off" and launches nothing, and the lead gets no instructions to use it.
+- **Permissions in normal use.** The live runs pre-approved the tools with `--allowedTools`. In a normal session, Claude Code asks the first time the lead calls `council_review` and a reviewer calls `request_capability` or `git_read` (or auto mode decides).
+- **Reloads mid-review.** Reviewer roles are re-read from `$.state` after a plugin reload, so enforcement holds. This path isn't covered by an automated test.
+- **Esc while reviewers run.** Interrupting the lead should stop foreground reviewers, as for any Agent call, and they're then reported INCOMPLETE. This hasn't been verified live.
 - **Developer overrides.** `NEXUS_COUNCIL_MODEL` (`haiku` or `sonnet`) and `NEXUS_COUNCIL_ACTIVATION` exist for cheap smoke tests. They apply to that session only and are never saved.
 
 ## Attribution

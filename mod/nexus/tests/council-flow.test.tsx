@@ -53,7 +53,7 @@ function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | 
     w.gitCalls.push(argv)
     if (argv[1] === 'rev-parse') return ok('true\n')
     if (argv[1] === 'diff') return ok(w.diff)
-    if (argv[1] === 'ls-files') return ok('.env\nnotes/new.ts\n')
+    if (argv[1] === 'ls-files') return ok((w as any).noUntracked ? '' : '.env\nnotes/new.ts\n')
     if (argv[1] === 'log') return ok('abc123 first commit\n')
     return ok('')
   })
@@ -308,8 +308,8 @@ test('nothing to review, and no recursion from a subagent', async ($, on) => {
   await leadTurnWithAdvisor($)
   w.diff = ''
   ;(w as any).noUntracked = true
-  const empty = await councilCall($, { summary: 's', selection: 'security' })
-  expect(empty).toMatch(/authorized|no changes/) // untracked files still count as changes
+  expect(await councilCall($, { summary: 's', selection: 'security' })).toMatch(/no changes to review/)
+  expect(w.spawned).toEqual([])
   const out = await $.tool.call({ tool: 'mcp__nexus__council_review', summary: 's', agentId: 'some-agent' } as any).catch((e: unknown) => ({ deny: String(e) }))
   expect(JSON.stringify(out)).toMatch(/lead only|deny/)
 })

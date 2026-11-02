@@ -12,6 +12,7 @@ import {
   mayCall,
   parseFindings,
   parseSelection,
+  redact,
   reviewerSystemPrompt,
   reviewerTask,
   reviewersFor,
@@ -111,6 +112,14 @@ test('git_read builds fixed argv and refuses flags, absolute paths, traversal an
   for (const bad of [gitArgv('log', '--output=/tmp/x', undefined), gitArgv('show', undefined, '--exec=x'), gitArgv('blame', '/etc/passwd', undefined), gitArgv('blame', '../x', undefined), gitArgv('blame', '.env', undefined), gitArgv('push', undefined, undefined), gitArgv('show', undefined, 'a;b')]) {
     expect('error' in bad).toBe(true)
   }
+})
+
+test('redaction: emails and credentials masked; ordinary names and commit hashes kept', async () => {
+  expect(redact('mail owner@example.com now')).toBe('mail [email redacted] now')
+  expect(redact('API_TOKEN=abcd1234 rest')).toBe('API_TOKEN=[redacted] rest')
+  expect(redact('key sk-ant-abcdefghijklmnop')).toMatch(/\[token redacted\]/)
+  expect(redact('skeletonLoaderComponent and skipValidation')).toBe('skeletonLoaderComponent and skipValidation')
+  expect(redact('commit 9f335ae4c1d2b3a4e5f60718293a4b5c6d7e8f90')).toBe('commit 9f335ae4c1d2b3a4e5f60718293a4b5c6d7e8f90')
 })
 
 test('secret paths', async () => {

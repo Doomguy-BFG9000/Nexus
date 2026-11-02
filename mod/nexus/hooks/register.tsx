@@ -1423,6 +1423,17 @@ async function closeCheckpoint($: EngineInterface, why: string) {
   await addLog($, { who: 'council', kind: 'info', text: 'council not launched', detail: why })
 }
 
+/** A reviewer's role by agent id: the in-memory map, else the ids kept in $.state (which a reload keeps). */
+async function roleOf($: EngineInterface, agentId: string | undefined): Promise<CouncilRole | undefined> {
+  if (!agentId) return undefined
+  const known = reviewerRoles.get(agentId)
+  if (known) return known
+  const c = await read($, council)
+  const role = ROLES.find(r => c.reviewers[r].agentId === agentId)
+  if (role) reviewerRoles.set(agentId, role)
+  return role
+}
+
 /** A reviewer's latest call, for its panel row: what ran, or what was refused. */
 async function noteActivity($: EngineInterface, agentId: string, text: string) {
   const role = reviewerRoles.get(agentId)
@@ -1438,7 +1449,7 @@ async function ledgerDeny($: EngineInterface, agentId: string, capability: strin
 
 /** A reviewer asks for more than it started with: the deterministic router answers, and the ledger records it. */
 async function requestCapability($: EngineInterface, agentId: string | undefined, input: Record<string, unknown>): Promise<string> {
-  const role = agentId ? reviewerRoles.get(agentId) ?? null : null
+  const role = (await roleOf($, agentId)) ?? null
   const capability = typeof input.capability === 'string' ? input.capability : ''
   const verdict = role ? route(capability) : { decision: 'deny' as const, rule: 'only council reviewers request capabilities here' }
   const at = await $.clock.now()
@@ -1503,7 +1514,7 @@ async function registerCouncil($: EngineInterface) {
     for (const r of ROLES) {
       await $.agent.register({
         name: AGENT_NAME[r],
-        description: `NEXUS Council ${r} reviewer (read-only, started by NEXUS only).`,
+        description: `NEXUS Council ${r} reviewer (read-only). Launch only when mcp__nexus__council_review authorizes it, as it says.`,
         prompt: reviewerSystemPrompt(r),
         model: councilModel,
         tools: [...BASE_TOOLS, REQUEST_TOOL, ...GRANTABLE_TOOLS],
@@ -1567,7 +1578,7 @@ export const register: Register = (on, options) => {
   }))
   on('tool.call', { tool: 'mcp__nexus__git_read' as 'Read' }, async ($, e) => {
     // The enforcement hook above has already refused an ungranted call.
-    if (!e.agentId || !reviewerRoles.has(e.agentId)) return { deny: 'git_read is for council reviewers only' }
+    if (!e.agentId || !(await roleOf($, e.agentId))) return { deny: 'git_read is for council reviewers only' }
     if (!((await read($, council)).granted[e.agentId] ?? []).includes(GIT_TOOL)) {
       const why = `${GIT_TOOL} needs a grant: call ${REQUEST_TOOL} first`
       await noteActivity($, e.agentId, '✗ refused git_read')
@@ -1583,7 +1594,7 @@ export const register: Register = (on, options) => {
   // The agent definition already withholds write, shell and network tools; this
   // is the second check (secret paths, ungranted capabilities), with a ledger.
   on('tool.call', { tool: /^/ }, async ($, e, next) => {
-    const role = e.agentId ? reviewerRoles.get(e.agentId) : undefined
+    const role = await roleOf($, e.agentId)
     if (!role || !e.agentId) return next(e)
     const id = e.agentId
     const name = String(e.tool)
@@ -1868,7 +1879,12 @@ export const register: Register = (on, options) => {
     await addFx($, 'spawn', agent.id)
     await addLog($, { who: who(agent.type), kind: 'start', text: `${agent.label} started`, detail: e.description })
     return spawned
-  }).catch(($, e, next) => next(e)) // an observer never holds up the engine
+  }).catch(($, e, next) =>
+    // The council gate fails closed: a reviewer never starts ungated. Anything else is only observed.
+    isCouncilType(String(e.subagentType ?? (e as unknown as { subagent_type?: string }).subagent_type ?? ''))
+      ? { deny: 'NEXUS could not check this council launch, so it is refused' }
+      : next(e),
+  )
 
   on('classic.SubagentStop', async ($, e, next) => {
     if (reviewerRoles.has(e.agent_id)) return next(e)

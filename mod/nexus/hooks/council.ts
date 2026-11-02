@@ -173,8 +173,9 @@ export function redact(text: string): string {
   return text
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email redacted]')
     .replace(/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY)[A-Z0-9_]*)\s*[=:]\s*\S+/gi, '$1=[redacted]')
-    .replace(/\b(?:sk|ghp|gho|xox[abprs]|AKIA)[A-Za-z0-9_-]{10,}\b/g, '[token redacted]')
-    .replace(/\b[A-Za-z0-9_\-]{40,}\b/g, '[long token redacted]')
+    .replace(/\b(?:sk-|sk_live_|sk_test_|ghp_|gho_|ghs_|xox[abprs]-|AKIA)[A-Za-z0-9_-]{10,}\b/g, '[token redacted]')
+    // Long mixed strings look like tokens; hex-only ones are hashes (commits), kept.
+    .replace(/\b(?=[A-Za-z0-9_\-]*[g-zG-Z_\-])[A-Za-z0-9_\-]{40,}\b/g, '[long token redacted]')
 }
 
 /** A reviewer's path as the repository names it: absolute paths under the root lose the root. */
