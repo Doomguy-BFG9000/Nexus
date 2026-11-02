@@ -1,4 +1,11 @@
-# Changelog (swarm-ui)
+# Changelog (NEXUS)
+
+## 0.6.0 (2026-11-02): NEXUS everywhere
+- The plugin is now `nexus` and its marketplace `muhzain05`: `claude plugin marketplace add muhzain05/Nexus`, then `claude plugin install nexus@muhzain05 --scope user`. If you installed `swarm-ui@claude-swarm`, uninstall it and install `nexus@muhzain05`; preferences start fresh.
+- The deprecated `/swarm`, `/swarm-mode` and `/swarm-jev` aliases are removed. Use `/nexus`, `/nexus-mode` and `/nexus-jev`.
+- The NEXUS agents are `nexus-search`, `nexus-grep` and `nexus-audit` (formerly `swarm-*`); other agent types still show as fallback agents.
+- The Jev key's Keychain item is now `nexus-typesafe`.
+- The source moves to `mod/nexus`.
 
 ## 0.5.0 (2026-11-02): NEXUS commands, help and onboarding
 - Commands move to the NEXUS namespace: `/nexus` (open, close, agents, inspect, usage, settings, layout, width, cache, doctor), `/nexus-mode`, `/nexus-jev`, `/nexus-help`, `/nexus-about`. `/swarm`, `/swarm-mode` and `/swarm-jev` still work as deprecated aliases and say where each moved.

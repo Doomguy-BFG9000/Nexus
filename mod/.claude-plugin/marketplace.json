@@ -1,5 +1,1 @@
-{
-  "name": "swarm-local",
-  "owner": { "name": "Muhammad Zain" },
-  "plugins": [{ "name": "swarm-ui", "source": "./swarm-ui" }]
-}
+{"name": "nexus-local", "owner": {"name": "Muhammad Zain"}, "plugins": [{"name": "nexus", "source": "./nexus"}]}
