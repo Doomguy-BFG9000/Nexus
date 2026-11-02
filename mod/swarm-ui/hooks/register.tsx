@@ -7,6 +7,8 @@ import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
 import { CALIBRATION, ROUTABLE, ROUTE, accept, candidates, errorKind, hintText, judge, score } from './routing'
 import { DUAL } from './orbit'
+import { BEAT_PROMPT, NEW_GUARD, WARM_SHARE, decide, readShare, ttlEvidence } from './cacheguard'
+import type { Guard } from './cacheguard'
 import type { CaseResult } from './routing'
 import {
   CLASSIFY_CAP,
@@ -71,6 +73,9 @@ export const usage = atom(
 
 /** Tokens by the model that answered, each request counted once. */
 export const models = atom({ plugin: 'swarm-ui', key: 'models' } as const, {} as Record<string, ModelRow>, { shape: 'models-1' })
+
+/** Cache Guard: this session's state; its settings live in prefs. */
+export const guard = atom({ plugin: 'swarm-ui', key: 'guard' } as const, NEW_GUARD as Guard, { shape: 'guard-1' })
 
 export const view = atom({ plugin: 'swarm-ui', key: 'view' } as const, { kind: 'diagram', ref: null } as View, { shape: 'view-1' })
 
@@ -155,6 +160,9 @@ let pendingHint: string | null = null
 const gate = new Gate()
 /** Requests already counted (turn.step results), so a repeat is never added twice. */
 const counted = new Set<string>()
+/** Cache Guard's one timer: re-arming always cancels the last, so there is never a second. */
+let guardTimer: Timer | null = null
+let isBeating = false
 const history: string[] = []
 const files: string[] = []
 
@@ -197,7 +205,7 @@ async function frame($: EngineInterface) {
 }
 
 async function snapshot($: EngineInterface): Promise<Snapshot> {
-  const [l, a, list, j, rows, m, f, r, t, v, pr, us, md, now] = await Promise.all([
+  const [l, a, list, j, rows, m, f, r, t, v, pr, us, md, gd, now] = await Promise.all([
     read($, lead),
     read($, advisor),
     read($, agents),
@@ -211,9 +219,10 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
     read($, prefs),
     read($, usage),
     read($, models),
+    read($, guard),
     $.clock.now(),
   ])
-  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, usage: us, models: md, now }
+  return { lead: l, advisor: a, agents: list, jev: j, log: rows, mode: m, fx: f, reduceMotion: r, tick: t, view: v, prefs: pr, usage: us, models: md, guard: gd, now }
 }
 
 /** Re-reads Claude Code's own usage figures: free (no breakdown asked), no request is made. */
@@ -274,6 +283,150 @@ async function usageText($: EngineInterface): Promise<string> {
   return lines.filter(l => l !== '').join('\n').replace(/\n\n\n/g, '\n\n')
 }
 
+// ---- Cache Guard -------------------------------------------------------------
+function cancelGuard() {
+  guardTimer?.cancel()
+  guardTimer = null
+}
+
+/** Busy: the lead works or waits on a dialog, or any agent still runs. */
+async function isSessionBusy($: EngineInterface): Promise<boolean> {
+  const [l, list] = await Promise.all([read($, lead), read($, agents)])
+  return l.turnStartedAt !== null || l.isWaiting || list.some(a => a.status === 'running')
+}
+
+/** Decides now and schedules the next look; the only place a beat starts. */
+async function guardTick($: EngineInterface) {
+  cancelGuard()
+  if (isBeating) return
+  const [g, p, now] = await Promise.all([read($, guard), read($, prefs), $.clock.now()])
+  const d = decide(g, p.cacheGuard, { now, isBusy: await isSessionBusy($) })
+  if (d.act === 'stop') {
+    if (g.status !== d.status || g.reason !== d.reason) {
+      await update($, guard, (x): Guard => ({ ...x, status: d.status, reason: d.reason, nextAt: null }))
+      if (d.status !== 'OFF' && d.status !== 'ARMED') await addLog($, { who: 'lead', kind: 'info', text: `cache guard ${d.status.toLowerCase()}`, detail: d.reason })
+    }
+    return
+  }
+  if (d.act === 'wait') {
+    // A warm guard keeps what its beat measured as the reason.
+    await update($, guard, (x): Guard => ({ ...x, status: d.status, reason: d.status === 'WARM' && x.reason ? x.reason : d.reason, nextAt: d.until, armedAt: x.armedAt ?? now }))
+    guardTimer = $.clock.after(Math.max(1000, d.until - now), () => void guardTick($))
+    return
+  }
+  await beat($)
+}
+
+/** One beat: a fork of the main thread's last request, read from the cache. */
+async function beat($: EngineInterface) {
+  isBeating = true
+  try {
+    const before = await $.clock.now()
+    await update($, guard, (x): Guard => ({ ...x, status: 'REFRESHING', reason: 'beat running' }))
+    await addFx($, 'beat', null)
+    const costBefore = (await read($, usage)).costUsd
+    const r = await $.model.fork({ prompt: BEAT_PROMPT })
+    await refreshUsage($)
+    const costAfter = (await read($, usage)).costUsd
+    const now = await $.clock.now()
+    if (!r.isAnswered) {
+      const why = r.reason === 'nothing-to-fork' ? 'no conversation to keep warm yet' : `beat failed: ${r.reason}${'status' in r && r.status ? ` ${r.status}` : ''}`
+      await update($, guard, (x): Guard => ({
+        ...x,
+        status: r.reason === 'nothing-to-fork' ? 'PAUSED' : 'ERROR',
+        reason: why,
+        nextAt: null,
+        errors: [...x.errors, why].slice(-5),
+      }))
+      await addLog($, { who: 'lead', kind: 'error', text: 'cache guard', detail: why })
+      return
+    }
+    const u = r.usage
+    const share = readShare(u)
+    const isWarm = share !== null && share >= WARM_SHARE
+    const idleMin = Math.round((before - Math.max((await read($, guard)).activityAt ?? before, (await read($, guard)).lastBeatAt ?? 0)) / 60_000)
+    await update($, guard, (x): Guard => ({
+      ...x,
+      beats: x.beats + 1,
+      lastBeatAt: now,
+      tokens: {
+        input: x.tokens.input + u.input_tokens,
+        output: x.tokens.output + u.output_tokens,
+        cacheRead: x.tokens.cacheRead + u.cache_read_input_tokens,
+        cacheWrite: x.tokens.cacheWrite + u.cache_creation_input_tokens,
+      },
+      usd: x.usd + (costBefore !== null && costAfter !== null ? Math.max(0, costAfter - costBefore) : 0),
+      lastBeatUsd: costBefore !== null && costAfter !== null ? Math.max(0, costAfter - costBefore) : x.lastBeatUsd,
+      lastBeatRead: share,
+      isAwaitingProof: isWarm,
+      status: isWarm ? 'WARM' : 'EXPIRED',
+      nextAt: isWarm ? x.nextAt : null,
+      reason: isWarm ? `beat read ${Math.round((share ?? 0) * 100)}% from cache` : 'the cache had lapsed: the beat paid to rebuild it',
+      // A beat still served from cache after this much idle proves the cache outlives it.
+      ttl: isWarm && idleMin >= 6 ? '1h' : !isWarm && idleMin < 55 && idleMin >= 6 ? '5m' : x.ttl,
+      ttlSource: isWarm && idleMin >= 6 ? `a beat read from cache after ${idleMin}m idle` : !isWarm && idleMin >= 6 ? `a beat after ${idleMin}m idle was uncached` : x.ttlSource,
+    }))
+    await addLog($, {
+      who: 'lead',
+      kind: isWarm ? 'done' : 'error',
+      text: isWarm ? 'cache guard beat · warm' : 'cache guard beat · cache was cold',
+      detail: `read ${compact(u.cache_read_input_tokens)} · write ${compact(u.cache_creation_input_tokens)}`,
+    })
+  } catch (err) {
+    const why = `beat error: ${String(err).slice(0, 80)}`
+    await update($, guard, (x): Guard => ({ ...x, status: 'ERROR', reason: why, errors: [...x.errors, why].slice(-5) }))
+  } finally {
+    isBeating = false
+  }
+  // A warm beat schedules the next; a cold one stops (decide sees EXPIRED's cause next time).
+  const g = await read($, guard)
+  if (g.status === 'WARM') await guardTick($)
+}
+
+/** The lead finished a real turn: idle time starts now. */
+async function guardActivityEnded($: EngineInterface) {
+  const now = await $.clock.now()
+  await update($, guard, (g): Guard => ({ ...g, activityAt: now, ...(g.status === 'EXPIRED' ? { status: 'ARMED' as const, reason: 'rearmed after a new turn' } : {}) }))
+  if ((await read($, prefs)).cacheGuard.enabled) await guardTick($)
+}
+
+/** The first real request after a beat: did it read from cache? Also TTL evidence from real idle gaps. */
+async function guardSawRequest($: EngineInterface, u: { input_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }) {
+  const [g, now] = await Promise.all([read($, guard), $.clock.now()])
+  const share = readShare(u)
+  const gap = g.activityAt === null ? 0 : now - g.activityAt
+  await update($, guard, (x): Guard => ({
+    ...x,
+    ...(x.isAwaitingProof ? { afterBeatRead: share, isAwaitingProof: false } : {}),
+    ...(x.ttl === 'unverified' && share !== null && share >= WARM_SHARE && gap >= 6 * 60_000
+      ? { ttl: '1h' as const, ttlSource: `the cache held over ${Math.round(gap / 60_000)}m idle` }
+      : {}),
+  }))
+}
+
+async function guardText($: EngineInterface): Promise<string> {
+  const [g, p, now] = await Promise.all([read($, guard), read($, prefs), $.clock.now()])
+  const c = p.cacheGuard
+  const pct = (v: number | null) => (v === null ? 'N/A' : `${Math.round(v * 100)}%`)
+  return [
+    `Cache Guard: ${g.status}${g.reason ? ` (${g.reason})` : ''}`,
+    `  settings   ${c.enabled ? 'on' : 'off'} · beat after ${c.idleMin}m idle · stops after ${c.maxHours}h · ${c.maxBeats} beats · $${c.budgetUsd.toFixed(2)} API est. budget${c.trustTtl ? ' · trusting a 1h TTL' : ''}`,
+    `  cache TTL  ${g.ttl}${g.ttlSource ? ` (${g.ttlSource})` : ''}`,
+    `  next beat  ${g.nextAt === null ? 'none planned' : `in ${elapsed(g.nextAt - now)}`}`,
+    `  last beat  ${g.lastBeatAt === null ? 'none' : `${elapsed(now - g.lastBeatAt)} ago, read ${pct(g.lastBeatRead)} from cache`}`,
+    `  after beat ${pct(g.afterBeatRead)} of the next real request came from cache${g.isAwaitingProof ? ' (waiting for that request)' : ''}`,
+    `  beats      ${g.beats} · tokens in ${g.tokens.input} · cache read ${g.tokens.cacheRead} · cache write ${g.tokens.cacheWrite} · out ${g.tokens.output}`,
+    `  cost       ${usd(g.usd)} API est. (Claude Code's ledger before and after each beat)`,
+    '  savings    N/A: a beat avoids a rebuild only if you come back; nothing here proves you will',
+    ...(g.errors.length ? ['  errors', ...g.errors.map(e => `    ${e}`)] : []),
+    '',
+    'A warm beat does not guarantee the next request hits the cache; "after beat" shows what it actually did.',
+    'Beats are Claude Code forks: no turn, no transcript entry, tools denied; this plugin\'s own hooks never see them.',
+    'Inspired by Cachebeat by Abdur Rahim (@ARahim3): https://github.com/ARahim3/cachebeat (no endorsement implied).',
+    'Change: /swarm cache on|off · /swarm settings cacheGuard.<key> <value>',
+  ].join('\n')
+}
+
 /** Preferences from the plugin's store, migrated; the first run seeds them from the plugin options. */
 async function loadPrefs($: EngineInterface) {
   let raw: unknown
@@ -320,6 +473,10 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
   if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(PANE_OPEN)
   await syncMotion($)
   animate($)
+  if (JSON.stringify(was.cacheGuard) !== JSON.stringify(next.cacheGuard)) {
+    if (!next.cacheGuard.enabled) cancelGuard()
+    await guardTick($)
+  }
 }
 
 /** Applies `change` to one agent by id. */
@@ -356,7 +513,10 @@ function toolTarget(e: Record<string, unknown>): { file: string | null; label: s
 /** The Agent tool's own totals, matched to the instance by its tool_use_id. */
 async function recordAgentResult($: EngineInterface, toolUseId: string | undefined, result: unknown) {
   if (!toolUseId || !result || typeof result !== 'object') return
-  const r = result as { totalTokens?: unknown; resolvedModel?: unknown }
+  const r = result as { totalTokens?: unknown; resolvedModel?: unknown; usage?: unknown }
+  const ttl = ttlEvidence(r.usage)
+  // Subagent 1h writes show the account caches for an hour; 5m-only proves nothing about the main thread.
+  if (ttl === '1h') await update($, guard, (g): Guard => (g.ttl === 'unverified' ? { ...g, ttl: '1h', ttlSource: 'subagent cache writes were 1-hour' } : g))
   const total = typeof r.totalTokens === 'number' ? r.totalTokens : null
   const model = typeof r.resolvedModel === 'string' ? r.resolvedModel : null
   if (total === null && model === null) return
@@ -823,6 +983,8 @@ export const register: Register = (on, options) => {
       // not available to this plugin: the strip reads "usage"
     }
     await refreshUsage($)
+    // A reload loses the module's timer: pick the guard up again from its state.
+    if ((await read($, prefs)).cacheGuard.enabled) await guardTick($)
 
     await $.command.register({
       name: 'swarm',
@@ -857,6 +1019,13 @@ export const register: Register = (on, options) => {
     }
     if (sub === 'settings') return { text: await settingsCommand($, arg) }
     if (sub === 'usage') return { text: await usageText($) }
+    if (sub === 'cache') {
+      if (arg === 'on' || arg === 'off') {
+        const out = await settingsCommand($, `cacheGuard.enabled ${arg}`)
+        return { text: `${out}\n${await guardText($)}` }
+      }
+      return { text: await guardText($) }
+    }
     if (sub === 'layout') return { text: await settingsCommand($, `layout ${arg}`) }
     if (sub === 'back') {
       await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
@@ -905,6 +1074,7 @@ export const register: Register = (on, options) => {
   // ---- turns: the lead's and every subagent's model requests -------------
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
+      cancelGuard()
       const now = await $.clock.now()
       // /advisor in this session changes it; keep what the dashboard says true.
       const sessionAdvisor = await setting($, 'advisorModel')
@@ -920,6 +1090,7 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
       await refreshUsage($)
+      await guardActivityEnded($)
     }
     else if (e.reason === 'aborted' || e.isAborted) await finishAgent($, e.agentId, 'cancelled', 'interrupted')
     else if (e.reason === 'error') await finishAgent($, e.agentId, 'failed', 'the run ended on an error')
@@ -964,6 +1135,7 @@ export const register: Register = (on, options) => {
     const result = yield* next(req)
     const usage_ = result.usage
     await countStep($, stepKey(undefined, e.turnId, e.index), usage_?.model, usage_, false)
+    if (usage_) await guardSawRequest($, usage_)
     await refreshUsage($)
 
     const context = usage_
@@ -1007,6 +1179,12 @@ export const register: Register = (on, options) => {
     }
     return result
   })
+
+  on('session.end', async ($, e, next) => {
+    cancelGuard()
+    await update($, guard, (g): Guard => (g.status === 'OFF' ? g : { ...g, status: 'OFF', reason: 'session ended', nextAt: null }))
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Counted, never changed: the compaction runs as the engine decides.
   on('session.compact', async ($, e, next) => {

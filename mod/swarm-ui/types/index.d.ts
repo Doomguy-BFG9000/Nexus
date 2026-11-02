@@ -171,6 +171,7 @@ declare module 'claude-code' {
       prefs: Shaped<import('../hooks/prefs').Prefs>
       usage: Shaped<Usage>
       models: Shaped<Record<string, import('../hooks/telemetry').ModelRow>>
+      guard: Shaped<import('../hooks/cacheguard').Guard>
       jev: Shaped<Jev>
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>

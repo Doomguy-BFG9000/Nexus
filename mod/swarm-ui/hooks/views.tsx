@@ -3,7 +3,7 @@ import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId } from './modes'
-import { coreOrbit, decisionOrbit, dualOrbit, swarmOrbit } from './orbit'
+import { coreOrbit, decisionOrbit, dualOrbit, refreshOrbit, swarmOrbit } from './orbit'
 import type { AgentPhase, JevOutcome, Sprite, Tone } from './orbit'
 import { SETTINGS, prefValue } from './prefs'
 import type { Prefs } from './prefs'
@@ -37,6 +37,7 @@ export type Snapshot = {
   prefs: Prefs
   usage: Usage
   models: Record<string, ModelRow>
+  guard: import('./cacheguard').Guard
   now: number
 }
 
@@ -432,6 +433,44 @@ export function TelemetryLine({ el, s }: { el: El; s: Snapshot }) {
   return <Text>{parts.flatMap((p, i) => (i === 0 ? [p] : [<Text color={C.dim}>   </Text>, p]))}</Text>
 }
 
+const GUARD_TONE: Record<string, string> = {
+  OFF: C.dim, ARMED: C.teal, REFRESHING: C.teal, WARM: C.teal, EXPIRED: C.amber, PAUSED: C.dim, ERROR: C.red,
+}
+
+/** Cache Guard, under the back-to-lead box: its state and what its beats measured. */
+export function CacheGuardBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
+  const { Box, Text } = el
+  const g = s.guard
+  const on = s.prefs.cacheGuard.enabled
+  const beatAt = [...s.fx].reverse().find(f => f.kind === 'beat')?.at ?? null
+  const mark = refreshOrbit(on ? g.status : 'OFF', beatAt === null ? null : s.now - beatAt, s.reduceMotion)
+  const pct = (v: number | null) => (v === null ? 'N/A' : `${Math.round(v * 100)}%`)
+  if (!on) {
+    return (
+      <Box width={width} borderStyle="single" borderColor={C.dim} paddingX={1}>
+        <Text color={C.dim}>{mark} cache guard · off · /swarm cache on</Text>
+      </Box>
+    )
+  }
+  const tone = GUARD_TONE[g.status] ?? C.dim
+  const tokens = g.tokens.input + g.tokens.cacheRead + g.tokens.cacheWrite + g.tokens.output
+  return (
+    <Box flexDirection="column" width={width} borderStyle="single" borderColor={C.tealDim} paddingX={1}>
+      <Text>
+        <Text color={tone} bold>{mark} cache guard </Text>
+        <Text color={tone}>{g.status.toLowerCase()}</Text>
+        <Text color={C.dim}>
+          {g.nextAt !== null && (g.status === 'ARMED' || g.status === 'WARM') ? ` · next ${elapsed(Math.max(0, g.nextAt - s.now))}` : ''} · beats {g.beats} · last read {pct(g.lastBeatRead)}
+        </Text>
+      </Text>
+      <Text color={C.dim}>
+        beat usage {compact(tokens)} tok · {usd(g.usd)} API est. · TTL {g.ttl}
+        {g.status === 'PAUSED' || g.status === 'ERROR' || g.status === 'EXPIRED' ? ` · ${g.reason ?? ''}` : ''}
+      </Text>
+    </Box>
+  )
+}
+
 /** USAGE: the plan windows Claude Code reported, as small bars; nothing is guessed. */
 export function UsageBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
@@ -697,7 +736,8 @@ function Diagram({ el, s, width, act }: { el: El; s: Snapshot; width: number; ac
           <Box justifyContent="center"><Text color={C.fg}>review + verify</Text></Box>
         </Box>
       </Box>
-      <Box marginTop={1}><UsageBox el={el} s={s} width={width} /></Box>
+      <Box marginTop={1}><CacheGuardBox el={el} s={s} width={width} /></Box>
+      <UsageBox el={el} s={s} width={width} />
     </Box>
   )
 }
@@ -763,6 +803,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
       ))}
       {s.agents.length === 0 && <Text color={C.dim}>no subagents yet</Text>}
       <InspectBar el={el} s={s} act={act} />
+      <CacheGuardBox el={el} s={s} width={width} />
       <UsageBox el={el} s={s} width={width} />
     </Box>
   )
