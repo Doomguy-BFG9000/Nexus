@@ -140,7 +140,7 @@ test('NEXUS sits on top with its subtitle beneath; the model legend is vertical 
   expect(at(/recent/)).toBeLessThan(at(/■ sonnet 5\.5\n/))
   expect(all).toMatch(/■ sonnet 5\.5\n[\s\S]{0,40}lead\n■ haiku/)
   expect(all).toMatch(/◈ Mode: Balanced/)
-  expect(all).toMatch(/↔ \/swarm width 92$/m)
+  expect(all).toMatch(/↔ max width$/m)
   // Context and session cost sit at the bottom left, above the models.
   expect(at(/recent/)).toBeLessThan(at(/^context$/m))
   expect(at(/^session$/m)).toBeLessThan(at(/■ sonnet 5\.5\n/))
@@ -155,10 +155,13 @@ test('/swarm width resizes the pane without key chords, clamps, and is saved', a
   expect(w.opened.length).toBe(opens + 1)
   expect((await run($, 'width wider')).text).toMatch(/→ 130 columns/)
   expect((await run($, 'width narrower')).text).toMatch(/→ 120 columns/)
-  expect((await run($, 'width 9999')).text).toMatch(/→ 200 columns/)
-  expect((await run($, 'width')).text).toMatch(/asks for 200 columns\. Usage/)
+  expect((await run($, 'width 9999')).text).toMatch(/as wide as Claude Code allows/)
+  expect((await run($, 'width')).text).toMatch(/asks for the maximum width\. Usage/)
+  expect((await run($, 'width 150')).text).toMatch(/→ 150 columns/)
   await start($)
-  expect((await run($, 'settings paneColumns')).text).toBe('paneColumns is 200')
+  expect((await run($, 'settings paneColumns')).text).toBe('paneColumns is 150')
+  expect((await run($, 'width max')).text).toMatch(/as wide as Claude Code allows/)
+  expect((await run($, 'settings paneColumns')).text).toBe('paneColumns is max')
 })
 
 test('/swarm width says so when a width set by hand in Claude Code is in charge', async ($, on) => {
@@ -191,4 +194,11 @@ test('/swarm width says so when a width set by hand in Claude Code is in charge'
   const all = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text ?? '').join('\n')
   await ui.unmount()
   expect(all).toMatch(/↔ drag edge to resize/)
+})
+
+test('preferences from before v2 move to the maximum pane width; a v2 choice is kept', async () => {
+  expect(migrate({ version: 1, paneColumns: 150, layout: 'compact' }).paneColumns).toBe(999)
+  expect(migrate({ version: 1, paneColumns: 150, layout: 'compact' }).layout).toBe('compact')
+  expect(migrate({ version: 2, paneColumns: 150 }).paneColumns).toBe(150)
+  expect(migrate(undefined).paneColumns).toBe(999)
 })

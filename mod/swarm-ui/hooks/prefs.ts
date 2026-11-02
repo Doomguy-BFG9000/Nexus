@@ -6,15 +6,18 @@ export type { Prefs }
 
 
 
+/** Asking for this many columns opens the pane as wide as Claude Code allows (45% of the terminal). */
+export const PANE_MAX = 999
+
 export const DEFAULT_PREFS: Prefs = {
-  version: 1,
+  version: 2,
   layout: 'auto',
   animation: 'auto',
   agentDetail: 'full',
   advisorOrbit: 'wide',
   telemetry: { context: true, cost: true, usage: true, tokens: false },
   logRows: 4,
-  paneColumns: 92,
+  paneColumns: PANE_MAX,
   jev: 'bars',
   escalation: 'ask',
   cacheGuard: { enabled: false, idleMin: 50, maxHours: 8, maxBeats: 10, budgetUsd: 0.5, trustTtl: false },
@@ -33,7 +36,7 @@ export function migrate(raw: unknown): Prefs {
   const t = (r.telemetry ?? {}) as Record<string, unknown>
   const c = (r.cacheGuard ?? {}) as Record<string, unknown>
   return {
-    version: 1,
+    version: 2,
     layout: pick(r.layout, ['auto', 'full', 'compact', 'minimal'], d.layout),
     animation: pick(r.animation, ['auto', 'full', 'reduced', 'off'], d.animation),
     agentDetail: pick(r.agentDetail, ['brief', 'full'], d.agentDetail),
@@ -45,7 +48,8 @@ export function migrate(raw: unknown): Prefs {
       tokens: bool(t.tokens, d.telemetry.tokens),
     },
     logRows: Math.round(num(r.logRows, 0, 6, d.logRows)),
-    paneColumns: Math.round(num(r.paneColumns, 40, 200, d.paneColumns)),
+    // v2: the pane opens as wide as Claude Code allows unless a width was chosen since.
+    paneColumns: r.version === 2 ? Math.round(num(r.paneColumns, 40, PANE_MAX, d.paneColumns)) : PANE_MAX,
     jev: pick(r.jev, ['bars', 'line', 'hidden'], d.jev),
     escalation: pick(r.escalation, ['ask', 'off'], d.escalation),
     cacheGuard: {
@@ -70,7 +74,7 @@ export const SETTINGS: { key: string; options?: string[]; range?: [number, numbe
   { key: 'telemetry.usage', options: ['on', 'off'], help: 'plan usage bars' },
   { key: 'telemetry.tokens', options: ['on', 'off'], help: 'per-model tokens in the strip' },
   { key: 'logRows', range: [0, 6], help: 'session log rows' },
-  { key: 'paneColumns', range: [40, 200], help: 'pane width (also /swarm width)' },
+  { key: 'paneColumns', range: [40, PANE_MAX], help: `pane width; ${PANE_MAX} = as wide as allowed (/swarm width max)` },
   { key: 'jev', options: ['bars', 'line', 'hidden'], help: 'Jev panel' },
   { key: 'escalation', options: ['ask', 'off'], help: 'stronger-mode suggestions' },
   { key: 'cacheGuard.enabled', options: ['on', 'off'], help: 'Cache Guard' },
@@ -92,7 +96,7 @@ export function setPref(prefs: Prefs, key: string, value: string): SetResult {
     if (!spec.options.includes(value)) return { ok: false, why: `${key} takes ${spec.options.join(' | ')}` }
     if (spec.options[0] === 'on') v = value === 'on'
   } else if (spec.range) {
-    const n = Number(value)
+    const n = key === 'paneColumns' && value === 'max' ? PANE_MAX : Number(value)
     if (!Number.isFinite(n) || n < spec.range[0] || n > spec.range[1]) return { ok: false, why: `${key} takes ${spec.range[0]} to ${spec.range[1]}` }
     v = n
   }
@@ -106,6 +110,7 @@ export function setPref(prefs: Prefs, key: string, value: string): SetResult {
 export function prefValue(prefs: Prefs, key: string): string {
   const [head, tail] = key.split('.')
   const v = tail ? (prefs as any)[head!][tail] : (prefs as any)[head!]
+  if (key === 'paneColumns' && v >= PANE_MAX) return 'max'
   return typeof v === 'boolean' ? (v ? 'on' : 'off') : String(v)
 }
 

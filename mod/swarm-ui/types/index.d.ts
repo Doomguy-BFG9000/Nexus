@@ -162,7 +162,7 @@ export type LogRow = {
 }
 
 export type Prefs = {
-  version: 1
+  version: 2
   /** auto picks by pane width; full falls back when the pane is too narrow. */
   layout: 'auto' | 'full' | 'compact' | 'minimal'
   /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */

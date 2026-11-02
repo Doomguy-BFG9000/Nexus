@@ -24,7 +24,7 @@ import {
   plan,
 } from './modes'
 import { agentDetail, agentList } from './inspect'
-import { DEFAULT_PREFS, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
+import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
 import type { Prefs } from './prefs'
 import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
 import type { ModelRow } from './telemetry'
@@ -490,9 +490,16 @@ function paneOpen(p: Prefs) {
 /** `/swarm width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
 async function widthCommand($: EngineInterface, arg: string): Promise<string> {
   const p = await read($, prefs)
-  const want = arg === 'wider' ? p.paneColumns + 10 : arg === 'narrower' ? p.paneColumns - 10 : Number(arg)
-  if (!arg || !Number.isFinite(want)) return `The pane asks for ${p.paneColumns} columns. Usage: /swarm width <40-200> | wider | narrower`
-  const columns = Math.round(Math.min(200, Math.max(40, want)))
+  const isMax = p.paneColumns >= PANE_MAX
+  const want =
+    arg === 'max' ? PANE_MAX
+    : arg === 'wider' ? (isMax ? PANE_MAX : p.paneColumns + 10)
+    : arg === 'narrower' ? (isMax ? 100 : p.paneColumns - 10)
+    : Number(arg)
+  if (!arg || !Number.isFinite(want)) {
+    return `The pane asks for ${isMax ? 'the maximum width' : `${p.paneColumns} columns`}. Usage: /swarm width max | <40-200> | wider | narrower`
+  }
+  const columns = want >= PANE_MAX ? PANE_MAX : Math.round(Math.min(200, Math.max(40, want)))
   await applyPrefs($, p, { ...p, paneColumns: columns })
   const kept = await keptDockColumns($)
   keptWidth = kept
@@ -503,7 +510,9 @@ async function widthCommand($: EngineInterface, arg: string): Promise<string> {
       `To let /swarm width control it again: quit every Claude Code window, then remove "dockColumns" from "pluginPanes" in ~/.claude.json. (${columns} is saved for that.)`,
     ].join('\n')
   }
-  return `Pane width → ${columns} columns (Claude Code caps a docked pane at 45% of the terminal; saved for later sessions).`
+  return columns >= PANE_MAX
+    ? 'Pane width → as wide as Claude Code allows (45% of the terminal), in this and later sessions.'
+    : `Pane width → ${columns} columns (Claude Code caps a docked pane at 45% of the terminal; saved for later sessions).`
 }
 
 /** The dock width Claude Code keeps after the person resized it by hand; read only. */
