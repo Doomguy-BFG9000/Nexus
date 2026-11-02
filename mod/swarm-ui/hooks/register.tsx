@@ -1,10 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
-import type { Advisor, Fx, Jev, Lead, LogRow, Mode, ModeId, SwarmAgent } from '../types'
+import type { Advisor, Fx, Jev, JevDecision, Lead, LogRow, Mode, ModeId, SwarmAgent } from '../types'
 import { C, compact, elapsed, modelLabel, role } from './format'
 import { Gate, askJev, fileQuestion, retryQuestion, toolQuestion } from './jev'
 import type { JevAsk } from './jev'
+import { CALIBRATION, ROUTABLE, ROUTE, accept, candidates, errorKind, hintText, judge, score } from './routing'
+import type { CaseResult } from './routing'
 import {
   CLASSIFY_CAP,
   CLASSIFY_LABELS,
@@ -62,8 +64,17 @@ export const jev = atom(
     toolAgreed: 0,
     calls: 0,
     spentUsd: 0,
+    routing: 'observe',
+    calibration: null,
+    hints: 0,
+    hintsChecked: 0,
+    hintsFollowed: 0,
+    retries: 0,
+    recovered: 0,
+    fallbacks: 0,
+    lastRoute: null,
   } as Jev,
-  { shape: 'jev-2' },
+  { shape: 'jev-3' },
 )
 
 export const log = atom(
@@ -117,6 +128,10 @@ let home = ''
 let sessionId = ''
 let jevKey: string | undefined
 let hasWarnedPairing = false
+/** Mirrors jev.routing ($.state) so the tool path can read it without a hop. */
+let routing: Jev['routing'] = 'observe'
+/** The file the last hint named, until the lead's next read. */
+let pendingHint: string | null = null
 const gate = new Gate()
 const history: string[] = []
 const files: string[] = []
@@ -234,20 +249,27 @@ async function loadJevKey($: EngineInterface): Promise<string | undefined> {
 }
 
 function observeJev($: EngineInterface, ask: JevAsk, actualTool: string | null) {
-  if (!jevKey) return
+  if (routing === 'off') return
+  // Unawaited: a module unloaded mid-request must not leave a rejection behind.
+  void consult($, ask, actualTool).catch(() => null)
+}
+
+/** One Jev request through the gate; draws and logs its answers. null when none came. */
+async function consult($: EngineInterface, ask: JevAsk, actualTool: string | null): Promise<JevDecision[] | null> {
+  if (!jevKey || routing === 'off') return null
   const key = jevKey
-  void (async () => {
+  {
     const now = await $.clock.now()
     const blocked = gate.allow(now)
     if (blocked) {
       await markJev($, blocked)
-      return
+      return null
     }
     const out = await askJev($, key, ask, now)
     if (!out.ok) {
       gate.fail(now)
       await markJev($, out.reason)
-      return
+      return null
     }
     gate.record(now, out.inputTokens ?? 0)
     const pick = out.decisions.find(d => d.question === 'which tool')
@@ -272,7 +294,141 @@ function observeJev($: EngineInterface, ask: JevAsk, actualTool: string | null) 
         detail: `p=${d.p.toFixed(2)}${d.confidence === null ? '' : ` c=${d.confidence.toFixed(2)}`}  ${d.isSharp ? 'sharp' : 'split'}`,
       })
     }
-  })()
+    return out.decisions
+  }
+}
+
+// ---- active routing: read-only calls of the lead only (see routing.ts) -----
+async function setRouting($: EngineInterface, next: Jev['routing']) {
+  routing = next
+  await update($, jev, j => ({ ...j, routing: next }))
+}
+
+/** The lead decided: Jev's answer missed the bar or never came. */
+async function fallback($: EngineInterface, why: string) {
+  await update($, jev, j => ({ ...j, fallbacks: j.fallbacks + 1, lastRoute: `fallback: ${why}` }))
+  await addLog($, { who: 'jev', kind: 'info', text: 'fallback → lead decides', detail: why })
+}
+
+/** A failed read-only call: Jev may have it run once more. */
+async function routeRetry($: EngineInterface, tool: string, failure: string, rerun: () => Promise<any>, failed: any) {
+  const j = await read($, jev)
+  if (j.retries >= ROUTE.maxRetries) {
+    await fallback($, `retry cap ${ROUTE.maxRetries} reached`)
+    return failed
+  }
+  const kind = errorKind(failure)
+  const answers = await consult($, { history: [...history, `FAILED ${tool}: ${kind}`], questions: { 'retry or stop': retryQuestion() } }, null)
+  const d = answers?.find(x => x.question === 'retry or stop')
+  if (d && d.choice !== 'retry') {
+    await update($, jev, x => ({ ...x, lastRoute: `no retry: ${d.choice} (${kind})` }))
+    return failed
+  }
+  const verdict = accept(d)
+  if (!verdict.act) {
+    await fallback($, verdict.why)
+    return failed
+  }
+  const again = await rerun()
+  const isFixed = !('deny' in again && again.deny) && again.isError !== true
+  await update($, jev, x => ({
+    ...x,
+    retries: x.retries + 1,
+    recovered: x.recovered + (isFixed ? 1 : 0),
+    lastRoute: `retried ${tool}: ${isFixed ? 'recovered' : 'still failing'}`,
+  }))
+  await addLog($, { who: 'jev', kind: isFixed ? 'done' : 'error', text: `routed: retried ${tool}`, detail: isFixed ? 'recovered' : 'still failing' })
+  return again
+}
+
+/** After a read inside the workspace: Jev's pick among its sibling files, attached as an optional note. */
+async function routeHint($: EngineInterface, path: string, base: string, ran: any) {
+  const dir = path.slice(0, path.lastIndexOf('/'))
+  if (!cwd || !dir || (dir !== cwd && !dir.startsWith(`${cwd}/`))) return ran
+  let names: string[]
+  try {
+    names = candidates([...(await $.fs.list(dir))], base)
+  } catch {
+    return ran
+  }
+  const q = fileQuestion(names)
+  if (!q) return ran
+  const answers = await consult($, { history: [...history], questions: { 'which file': q } }, null)
+  const d = answers?.find(x => x.question === 'which file')
+  const verdict = accept(d)
+  if (!verdict.act || !d) {
+    await fallback($, verdict.act ? 'no answer' : verdict.why)
+    return ran
+  }
+  pendingHint = d.choice
+  await update($, jev, x => ({ ...x, hints: x.hints + 1, lastRoute: `hint: ${d.choice}` }))
+  await addLog($, { who: 'jev', kind: 'jev', text: `routed: next file → ${d.choice}`, detail: 'hint attached · lead decides' })
+  return { ...ran, context: [...(ran.context ?? []), hintText(d.choice, d)] }
+}
+
+/** Fixed cases with known answers; active routing engages only when they pass. */
+async function calibrate($: EngineInterface): Promise<string> {
+  if (!jevKey) return 'Jev has no key: active routing stays off.'
+  const key = jevKey
+  const was = routing
+  await setRouting($, 'calibrating')
+  const results: CaseResult[] = []
+  for (const c of CALIBRATION) {
+    const now = await $.clock.now()
+    const blocked = gate.allow(now)
+    if (blocked) {
+      results.push({ id: c.id, choice: null, p: null, isRight: false, isUnsafe: false })
+      continue
+    }
+    const instructions = c.question === 'retry or stop' ? retryQuestion().instructions : 'Which file is the coding agent most likely to need to work on next?'
+    const out = await askJev($, key, { history: c.history, questions: { [c.question]: { type: 'choice', instructions, criteria: c.criteria } } }, now)
+    if (!out.ok) {
+      gate.fail(now)
+      results.push({ id: c.id, choice: null, p: null, isRight: false, isUnsafe: false })
+      continue
+    }
+    gate.record(now, out.inputTokens ?? 0)
+    results.push(judge(c, out.decisions.find(d => d.question === c.question)))
+  }
+  const cal = score(results)
+  const at = await $.clock.now()
+  const next: Jev['routing'] = cal.passed ? 'active' : was === 'off' ? 'off' : 'observe'
+  routing = next
+  await update($, jev, j => ({
+    ...j,
+    routing: next,
+    calls: j.calls + results.filter(r => r.choice !== null).length,
+    spentUsd: gate.spent,
+    calibration: { passed: cal.passed, right: cal.right, total: cal.total, unsafe: cal.unsafe, at },
+  }))
+  await addLog($, {
+    who: 'jev',
+    kind: cal.passed ? 'done' : 'error',
+    text: `calibration ${cal.passed ? 'passed' : 'failed'} · ${cal.right}/${cal.total} right`,
+    detail: `${cal.unsafe} unsafe · routing ${next}`,
+  })
+  const lines = results.map(
+    r => `  ${r.isRight ? '✓' : r.isUnsafe ? '✗ UNSAFE' : '·'} ${r.id}: ${r.choice ?? 'no answer'}${r.p === null ? '' : ` (p ${r.p.toFixed(2)})`}`,
+  )
+  return [
+    `Jev calibration ${cal.passed ? 'passed' : 'failed'}: ${cal.right}/${cal.total} right, ${cal.unsafe} unsafe.`,
+    ...lines,
+    `Routing is now ${next}${cal.passed ? '' : ' (active needs no unsafe answer and 2/3 right)'}.`,
+  ].join('\n')
+}
+
+async function jevStatus($: EngineInterface): Promise<string> {
+  const j = await read($, jev)
+  const cal = j.calibration
+  return [
+    `Jev: ${j.status}${j.reason ? ` (${j.reason})` : ''} · routing ${j.routing}`,
+    `Bar to act: p ≥ ${ROUTE.minP} and confidence ≥ ${ROUTE.minConfidence}; routes only the lead's read-only ${[...ROUTABLE].join('/')} calls.`,
+    `Calibration: ${cal ? `${cal.passed ? 'passed' : 'failed'} ${cal.right}/${cal.total}, ${cal.unsafe} unsafe` : 'not run this session'}`,
+    `Hints ${j.hints} (followed ${j.hintsFollowed}/${j.hintsChecked}) · retries ${j.retries} (recovered ${j.recovered}) · fallbacks ${j.fallbacks}`,
+    `Observed: ${j.decisions} decisions · tool agreed ${j.toolAgreed}/${j.toolChecked} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} of $0.50`,
+    `Last: ${j.lastRoute ?? 'none'}`,
+    'Usage: /swarm-jev [status|active|observe|off|calibrate]',
+  ].join('\n')
 }
 
 /** The call a permission dialog held has run or been refused: the lead works again. */
@@ -383,7 +539,7 @@ async function statusText($: EngineInterface): Promise<string> {
     `Session launched with: ${modelLabel(m.sessionModel)} · advisor ${m.sessionAdvisor ?? 'off'} (from settings or --settings)`,
     `Rewrite in force: ${m.main ? `main ${m.main} · effort ${m.effort}` : 'none'}`,
     `Escalation: ${opts.escalation === 'off' ? 'off' : 'asks first'} · Haiku checks ${m.classified}/${CLASSIFY_CAP}`,
-    `Jev: ${j.status}${j.reason ? ` (${j.reason})` : ''} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} · observe-only`,
+    `Jev: ${j.status}${j.reason ? ` (${j.reason})` : ''} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} · routing ${j.routing}`,
   ]
   if (m.relaunch) lines.push(`Relaunch for the full mode: ${m.relaunch}`)
   lines.push('Usage: /swarm-mode [balanced|deep|max|default|status]')
@@ -453,6 +609,9 @@ export const register: Register = (on, options) => {
     await update($, lead, l => ({ ...l, model: l.model ?? sessionModel }))
     const j = await read($, jev)
     gate.spent = j.spentUsd
+    routing = j.routing === 'calibrating' ? 'observe' : j.routing
+    if (opts.jevRouting === 'off') routing = 'off'
+    if (routing !== j.routing) await update($, jev, x => ({ ...x, routing }))
     if (jevKey) {
       if (j.status === 'off') await update($, jev, x => ({ ...x, status: 'on' as const, reason: null }))
     } else {
@@ -468,6 +627,12 @@ export const register: Register = (on, options) => {
       name: 'swarm-mode',
       description: 'View or change the model mode for this session: balanced, deep, max, default, status',
     })
+    await $.command.register({
+      name: 'swarm-jev',
+      description: 'Jev routing for this session: status, active (after calibration), observe, off, calibrate',
+    })
+    // Asked for in /config: calibrate in the background, act only once it passes.
+    if (jevKey && opts.jevRouting === 'active' && routing !== 'active') void calibrate($)
     // Unasked, the engine seats it only on a wide terminal; /swarm opens it anywhere.
     void $.ui.open(PANE_OPEN)
 
@@ -487,6 +652,25 @@ export const register: Register = (on, options) => {
     const id = MODE_IDS.find(m => m === arg || MODES[m].label.toLowerCase().startsWith(arg))
     if (!id) return { text: `Unknown mode "${arg}".\n${await statusText($)}` }
     return { text: await applyMode($, id, '/swarm-mode') }
+  })
+
+  on('command.run', { command: 'swarm-jev' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    if (arg === '' || arg === 'status') return { text: await jevStatus($) }
+    if (arg === 'observe' || arg === 'off') {
+      await setRouting($, arg)
+      await addLog($, { who: 'jev', kind: 'mode', text: `routing ${arg}`, detail: '/swarm-jev' })
+      return { text: `Jev routing is ${arg} from now on${arg === 'off' ? ': no requests are sent' : ': answers are drawn, nothing is changed'}.` }
+    }
+    if (arg === 'active' || arg === 'calibrate') {
+      const j = await read($, jev)
+      if (arg === 'active' && j.calibration?.passed) {
+        await setRouting($, 'active')
+        return { text: 'Jev routing is active (calibration passed earlier this session).' }
+      }
+      return { text: await calibrate($) }
+    }
+    return { text: `Unknown "${arg}".\n${await jevStatus($)}` }
   })
 
   // ---- prompts: offer a stronger mode, never switch without a yes ----------
@@ -645,8 +829,15 @@ export const register: Register = (on, options) => {
       files.push(base)
       if (files.length > 8) files.shift()
     }
+    // Did the lead's read follow the last hint?
+    if (pendingHint && tool === 'Read' && base) {
+      const isFollowed = base === pendingHint
+      pendingHint = null
+      await update($, jev, j => ({ ...j, hintsChecked: j.hintsChecked + 1, hintsFollowed: j.hintsFollowed + (isFollowed ? 1 : 0) }))
+    }
+    const isRoutable = routing === 'active' && ROUTABLE.has(tool)
     const questions: JevAsk['questions'] = { 'which tool': toolQuestion() }
-    const fq = base ? fileQuestion(files) : null
+    const fq = base && !isRoutable ? fileQuestion(files) : null
     if (fq) questions['which file'] = fq
     // Asked with the history before this call, so 'which tool' predicts this very call.
     observeJev($, { history: [...history], questions }, tool)
@@ -658,6 +849,12 @@ export const register: Register = (on, options) => {
     await settleWait($)
     const isError = 'isError' in ran && ran.isError === true
     await update($, mode, m => ({ ...m, recentErrors: isError ? m.recentErrors + 1 : 0 }))
+    // Active routing: only a call the engine itself marked read-only, never a denied one.
+    if (isRoutable && !('deny' in ran && ran.deny) && ran.isReadOnly === true) {
+      if (isError) return routeRetry($, tool, typeof ran.text === 'string' ? ran.text : '', () => next(e), ran)
+      if (tool === 'Read' && path) return routeHint($, path, base, ran)
+      return ran
+    }
     if (isError) {
       observeJev($, { history: [...history, `FAILED ${tool}`], questions: { 'retry or stop': retryQuestion() } }, null)
     }

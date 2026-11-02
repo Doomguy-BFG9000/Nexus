@@ -1,6 +1,6 @@
 {
   "name": "swarm-ui",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Claude Code's own terminal as the Sonnet builds / Haiku swarms / advisor / Jev layout, with session-scoped model modes",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -9,7 +9,10 @@
       "title": "Mode escalation",
       "description": "ask: before a prompt that looks like a harder task, offer a stronger mode in a dialog (it never switches on its own). off: never ask.",
       "default": "ask",
-      "options": ["ask", "off"]
+      "options": [
+        "ask",
+        "off"
+      ]
     },
     "classifier": {
       "type": "boolean",
@@ -22,7 +25,22 @@
       "title": "Animation",
       "description": "auto follows Claude Code's own reduceMotion setting; reduced draws no movement; full always animates.",
       "default": "auto",
-      "options": ["auto", "reduced", "full"]
+      "options": [
+        "auto",
+        "reduced",
+        "full"
+      ]
+    },
+    "jevRouting": {
+      "type": "string",
+      "title": "Jev routing",
+      "description": "observe (default): Jev's answers are drawn, nothing changes. active: after a calibration passes this session, Jev may re-run a failed read-only Read/LSP call once or attach an optional next-file note to a read. off: no Jev requests. /swarm-jev changes it for one session.",
+      "default": "observe",
+      "options": [
+        "observe",
+        "active",
+        "off"
+      ]
     }
   }
 }

@@ -94,7 +94,7 @@ test('a key from the Keychain: a real answer is drawn with p, confidence and sha
   expect(pane).toMatch(/0\.91 sharp/)
   expect(pane).toMatch(/c0\.81/)
   expect(pane).toMatch(/tool agreed 1\/1/)
-  expect(await status($)).toMatch(/Jev: on · 1 calls · \$0\.0000 · observe-only/)
+  expect(await status($)).toMatch(/Jev: on · 1 calls · \$0\.0000 · routing observe/)
 })
 
 test('the environment variable wins over the Keychain', async ($, on) => {
@@ -173,4 +173,18 @@ test('the key never appears in the pane, the status, the log band or a transcrip
     expect(out).not.toContain(KEY)
     expect(out).not.toContain('apikey_')
   }
+})
+
+test('a new authenticated answer grows its bar from empty to its probability', async ($, on) => {
+  const w = engine(on, { keychain: true, reply: { status: 200, body: ANSWER } })
+  await start($)
+  await $.tool.call({ tool: 'Read', file_path: '/r/a.ts' })
+  await w.clock.settle()
+  const filled = async () => ((await paneText($)).match(/which tool\s*\n?(█+)/)?.[1] ?? '').length
+  await w.clock.advance(150)
+  const early = await filled()
+  await w.clock.advance(1000)
+  const full = await filled()
+  expect(early).toBeLessThan(full)
+  expect(full).toBeGreaterThan(0)
 })

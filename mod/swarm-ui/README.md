@@ -32,8 +32,23 @@ The pane only docks in the fullscreen TUI (`"tui": "fullscreen"`). Other surface
 
 Animations are driven by real events only. They run at 10 frames a second while an effect plays and stop when idle. With reduced motion, nothing moves, and counters redraw once a second while work runs.
 
+## Jev routing (`/swarm-jev`)
+| Setting | What Jev does |
+|---|---|
+| `observe` (default) | Its answers are drawn and logged; nothing changes. |
+| `active` | First, 6 fixed calibration cases must pass this session (no unsafe answer, at least 2/3 right). After that, Jev acts on only two decisions, both limited to the lead's own `Read`/`LSP` calls that the engine marked read-only (see below). |
+| `off` | No Jev requests at all. |
+
+What `active` may do:
+- **Retry:** a failed read-only call runs once more when Jev answers `retry` (at most 5 per session). Only the failure's kind is sent (for example "file not found"), never the message or a path.
+- **Next-file hint:** after a read inside the workspace, Jev picks among that file's visible sibling files. Its pick is attached to the result as an optional note. The model still decides.
+
+The bar for acting is p ≥ 0.85 and confidence ≥ 0.6. Anything below it, a missing answer, a timeout, the rate limit or the budget falls back to the lead with nothing changed. Jev never touches shell commands, edits, writes, permissions, subagents, commits or anything outside the workspace.
+
+`/swarm-jev observe` (or `off`) turns active routing off at once. The `jevRouting` option in `/config` sets the starting value; active mode still runs the calibration first.
+
 ## Jev key
-The key comes from `TYPESAFE_API_KEY` or, failing that, from the login Keychain item `claude-swarm-typesafe` (`security add-generic-password -s claude-swarm-typesafe -a "$USER" -w`). It's held in memory only and never drawn or logged. Jev stays observation-only.
+The key comes from `TYPESAFE_API_KEY` or, failing that, from the login Keychain item `claude-swarm-typesafe` (`security add-generic-password -s claude-swarm-typesafe -a "$USER" -w`). It's held in memory only and never drawn or logged.
 
 ## Where the numbers come from
 | Shown | Source |

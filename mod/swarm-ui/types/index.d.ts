@@ -69,6 +69,20 @@ export type Jev = {
   calls: number
   /** Estimated from the input tokens the API reported. */
   spentUsd: number
+  /** off: no calls; observe: drawn only; active: may retry a failed read or attach a hint. */
+  routing: 'off' | 'observe' | 'active' | 'calibrating'
+  calibration: { passed: boolean; right: number; total: number; unsafe: number; at: number } | null
+  /** Hints attached to a read's result, and how many the lead's next read followed. */
+  hints: number
+  hintsChecked: number
+  hintsFollowed: number
+  /** Failed reads Jev had re-run, and how many then succeeded. */
+  retries: number
+  recovered: number
+  /** Routable moments where Jev's answer missed the bar (or none came): the lead decided. */
+  fallbacks: number
+  /** The last routing outcome, for the dashboard. */
+  lastRoute: string | null
 }
 
 export type ModeId = 'balanced' | 'deep' | 'max'

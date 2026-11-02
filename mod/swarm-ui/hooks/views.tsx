@@ -300,10 +300,19 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       ))}
       {j.status === 'on' ? (
         <Text color={C.dim}>
-          sharp ≥ {JEV.threshold} · tool agreed {j.toolAgreed}/{j.toolChecked} · ${j.spentUsd.toFixed(4)} · observe-only
+          sharp ≥ {JEV.threshold} · tool agreed {j.toolAgreed}/{j.toolChecked} · ${j.spentUsd.toFixed(4)} ·{' '}
+          <Text color={j.routing === 'active' ? C.green : j.routing === 'calibrating' ? C.amber : C.dim} bold={j.routing === 'active'}>
+            {j.routing === 'active' ? 'ROUTING ACTIVE' : j.routing === 'calibrating' ? 'calibrating…' : j.routing === 'off' ? 'routing off' : 'observe-only'}
+          </Text>
         </Text>
       ) : (
         <Text color={C.dim}>jev {j.status} · {j.reason ?? 'N/A'}</Text>
+      )}
+      {j.routing === 'active' && (
+        <Text color={C.dim}>
+          hints <Text color={C.green}>{j.hints}</Text> (followed {j.hintsFollowed}/{j.hintsChecked}) · retries{' '}
+          <Text color={C.green}>{j.retries}</Text> ({j.recovered} ok) · fallbacks <Text color={C.orange}>{j.fallbacks}</Text>
+        </Text>
       )}
     </Box>
   )
