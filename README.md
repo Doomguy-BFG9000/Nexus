@@ -45,6 +45,16 @@ claude plugin install nexus@muhzain05 --scope user
 
 **Quick start:** `/nexus` → ask for real work (*"map this repo with subagents, then summarize"*) → try `/nexus-mode` and `/nexus usage`. `/nexus-about` explains everything in the terminal.
 
+### Agent Skill (optional)
+
+A companion skill teaches Claude to install, explain and troubleshoot NEXUS, and ships three optional Haiku agent definitions:
+
+```sh
+npx skills add muhzain05/Nexus --skill nexus -g -a claude-code
+```
+
+The skill doesn't install the dashboard; the two plugin commands above do. [skills/nexus](skills/nexus/SKILL.md)
+
 <br>
 
 ## Four roles, one view
