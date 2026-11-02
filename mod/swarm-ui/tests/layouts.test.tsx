@@ -31,7 +31,7 @@ function engine(on: On, stored?: Record<string, unknown>) {
 }
 
 const start = ($: any) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-const run = ($: any, args: string) => ($ as any).command.run({ command: 'swarm', args })
+const run = ($: any, args: string) => ($ as any).command.run({ command: 'nexus', args })
 
 async function texts($: any, width: number, placement: 'dock' | 'inline' = 'dock'): Promise<string> {
   const ui = await $.ui.mount(pane(width, placement))

@@ -57,7 +57,7 @@ export function candidates(names: { name: string; kind: string }[], current: str
 
 export function hintText(file: string, d: JevDecision): string {
   return (
-    `swarm-ui routing (Jev, p=${d.p.toFixed(2)}, confidence ${d.confidence?.toFixed(2)}): ` +
+    `NEXUS routing (Jev, p=${d.p.toFixed(2)}, confidence ${d.confidence?.toFixed(2)}): ` +
     `if another file is needed next, the most likely is ${file} in the same folder. ` +
     'Optional; ignore it if the task points elsewhere.'
   )

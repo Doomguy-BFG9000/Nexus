@@ -57,7 +57,7 @@ async function step($: any, turnId: string, index: number, agentId?: string) {
     // drain
   }
 }
-const usageCmd = async ($: any) => (await ($ as any).command.run({ command: 'swarm', args: 'usage' })).text as string
+const usageCmd = async ($: any) => (await ($ as any).command.run({ command: 'nexus', args: 'usage' })).text as string
 
 test('rules: labels, thresholds, freshness and local reset times', async () => {
   expect(limitLabel('five_hour')).toBe('5h')

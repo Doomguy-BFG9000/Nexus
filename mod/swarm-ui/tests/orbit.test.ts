@@ -11,31 +11,21 @@ function satellites(rows: string[]): [number, number][] {
 }
 
 for (const variant of ['tight', 'wide'] as const) {
-  test(`dual orbit (${variant}): still form, real revolution, mirrored satellites, seamless cycle`, async () => {
+  test(`dual orbit (${variant}): resting form, satellites in motion, dispersal, seamless loop`, async () => {
     const v = DUAL[variant]
+    const at = (c: number) => plain(dualOrbit(variant, c * v.cycleMs))
+    const sats = (rows: string[]) => satellites(rows)
     // At rest: core, two parked satellites and the faint path; nothing bright.
     expect(glyphs(plain(dualOrbit(variant, null))).replace(/·/g, '')).toBe('∘◇∘')
-    // Revolving phase: two satellites, mirrored left/right about the core, moving frame to frame.
-    const frames = [0.35, 0.45, 0.55, 0.65].map(c => plain(dualOrbit(variant, c * v.cycleMs)))
-    for (const f of frames) {
-      const sats = satellites(f)
-      // Opposite revolutions cross twice a turn: then both share the centre column.
-      if (sats.length === 1) {
-        expect(sats[0]![0]).toBe((v.w - 1) / 2)
-        continue
-      }
-      expect(sats.length).toBe(2)
-      const [[x1, y1], [x2, y2]] = sats as [[number, number], [number, number]]
-      expect(y1).toBe(y2)
-      expect(x1 + x2).toBe(v.w - 1)
-    }
+    // Turning: two bright satellites, moving frame to frame.
+    const frames = [0.3, 0.36, 0.42, 0.48].map(at)
+    for (const f of frames) expect(sats(f).length).toBeGreaterThanOrEqual(1)
     expect(new Set(frames.map(f => f.join('|'))).size).toBe(frames.length)
-    // The radius eases out: later satellites sit farther from the core.
-    const spread = (f: string[]) => Math.abs(satellites(f)[0]![0] - (v.w - 1) / 2) + 2 * Math.abs(satellites(f)[0]![1] - (v.h - 1) / 2)
-    expect(spread(plain(dualOrbit(variant, 0.66 * v.cycleMs)))).toBeGreaterThan(spread(plain(dualOrbit(variant, 0.27 * v.cycleMs))))
-    // The end of a cycle and the start of the next look alike: just the core.
-    expect(glyphs(plain(dualOrbit(variant, v.cycleMs - 1))).replace(/·/g, '')).toMatch(/^[●∘]$/)
-    expect(plain(dualOrbit(variant, v.cycleMs + 10))).toEqual(plain(dualOrbit(variant, 10)))
+    // Dispersal: more points than the whole satellites ever show.
+    const count = (rows: string[]) => glyphs(rows).replace(/[●◈∘]/g, '').length
+    expect(count(at(0.66))).toBeGreaterThan(count(at(0.35)))
+    // Seamless: the cycle's end looks like the next cycle's start.
+    expect(at(1 + 0.01)).toEqual(at(0.01))
   })
 }
 

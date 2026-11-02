@@ -90,7 +90,7 @@ async function start($: any) {
 }
 
 async function jev($: any, args: string): Promise<string> {
-  return (await $.command.run({ command: 'swarm-jev', args })).text
+  return (await $.command.run({ command: 'nexus-jev', args })).text
 }
 
 async function active($: any) {

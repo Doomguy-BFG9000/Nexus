@@ -1,4 +1,4 @@
-// Agent inspection as text: /swarm agents and /swarm inspect. Pure.
+// Agent inspection as text: /nexus agents and /nexus inspect. Pure.
 import type { SwarmAgent, Tokens } from '../types'
 import { clock, compact, elapsed, modelLabel, pad } from './format'
 
@@ -23,19 +23,19 @@ export function agentList(list: SwarmAgent[]): string {
     (a, i) =>
       `${pad(String(i + 1), 3)}${pad(a.label, Math.max(12, ...list.map(x => x.label.length + 2)))}${pad(modelLabel(a.model), 11)}${pad(`${MARK[a.status]} ${a.status}`, 12)}${a.isSwarm ? '' : '[fallback] '}${a.description}`,
   )
-  return [...rows, '', '/swarm inspect <number|label> for one agent.'].join('\n')
+  return [...rows, '', '/nexus inspect <number|label> for one agent.'].join('\n')
 }
 
 export function agentDetail(a: SwarmAgent, now: number): string {
   const lines = [
-    `${a.label} · ${modelLabel(a.model)} · ${stateLabel(a, now)}${a.isSwarm ? '' : ' · fallback agent (not a configured swarm agent)'}`,
+    `${a.label} · ${modelLabel(a.model)} · ${stateLabel(a, now)}${a.isSwarm ? '' : ' · fallback agent (not one of the configured NEXUS agents)'}`,
     `type      ${a.type}${a.isWorktree ? ' (runs in a worktree)' : ''}`,
     `task      ${a.description || 'N/A'}`,
     `prompt    ${a.prompt || 'N/A'}`,
     `turns     ${turnsLabel(a)} · tools ${a.tools}${a.lastTool ? ` · last ${a.lastTool}` : ''}`,
     `tokens    ${tokensLabel(a.tokens)} (summed from its own requests)`,
     `reported  ${a.reportedTokens === null ? 'N/A' : `${compact(a.reportedTokens)} total tokens (Agent tool result)`}`,
-    'cost      API est. N/A per agent (Claude Code prices the session as a whole: /swarm usage)',
+    'cost      API est. N/A per agent (Claude Code prices the session as a whole: /nexus usage)',
     `files     ${a.files.length ? a.files.slice(-8).join(', ') : 'none'}`,
     'recent',
     ...(a.recent.length ? a.recent.map(r => `  ${clock(r.at)}  ${r.text}`) : ['  none']),

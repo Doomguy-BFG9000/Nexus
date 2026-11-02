@@ -3,7 +3,7 @@ import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
 import { MODES, family, launchedMode, modelId, pairing } from './modes'
-import { MINI_W, coreOrbit, decisionMini, dualOrbit, miniOrbit, refreshOrbit } from './orbit'
+import { MINI_W, coreOrbit, decisionMini, dualOrbit, miniOrbit, nexusLogo, refreshOrbit } from './orbit'
 import type { AgentPhase, JevOutcome, Sprite, Tone } from './orbit'
 import { SETTINGS, prefValue } from './prefs'
 import type { Prefs } from './prefs'
@@ -17,8 +17,10 @@ type El = { Box: any; Text: any; Button?: any }
 /** What a focused pane can do: open one agent, or go back to the diagram. */
 export type Actions = {
   inspect: (id: string) => void
+  /** Opens the settings view (the header's gear, or s). */
+  settings: () => void
   back: () => void
-  /** Sets one preference by its dotted key, as `/swarm settings` does. */
+  /** Sets one preference by its dotted key, as `/nexus settings` does. */
   set: (key: string, value: string) => void
   isFocused: boolean
 }
@@ -134,7 +136,7 @@ function modeName(s: Snapshot): string {
   return id ? MODES[id].label : 'custom'
 }
 
-type Palette = Record<Exclude<Tone, 'blank'>, string>
+type Palette = Record<'core' | 'sat' | 'trail' | 'faint', string> & Partial<Record<'r1' | 'r2' | 'r3' | 'r4', string>>
 const PALETTE: Record<'lead' | 'swarm' | 'advisor' | 'jev' | 'done' | 'failed', Palette> = {
   lead: { core: C.orange, sat: C.orangeHi, trail: '#b4785a', faint: '#6e5040' },
   swarm: { core: C.blue, sat: C.blueHi, trail: '#6487c8', faint: '#465a82' },
@@ -150,7 +152,7 @@ function Orbit({ el, sprite, palette }: { el: El; sprite: Sprite; palette: Palet
   return (
     <Box flexDirection="column">
       {sprite.map(row => (
-        <Text>{row.map(run => (run.tone === 'blank' ? <Text>{run.text}</Text> : <Text color={palette[run.tone]}>{run.text}</Text>))}</Text>
+        <Text>{row.map(run => (run.tone === 'blank' ? <Text>{run.text}</Text> : <Text color={palette[run.tone] ?? palette.sat}>{run.text}</Text>))}</Text>
       ))}
     </Box>
   )
@@ -195,29 +197,36 @@ function Track({ el, width, dots, color }: { el: El; width: number; dots: number
   return <Text>{parts}</Text>
 }
 
-/** The NEXUS emblem: a hub linked to four nodes, one per role's colour. */
-function Emblem({ el }: { el: El }) {
-  const { Box, Text } = el
-  return (
-    <Box flexDirection="column">
-      <Text><Text color={C.orange}>•╲</Text><Text> </Text><Text color={C.blue}>╱•</Text></Text>
-      <Text><Text>  </Text><Text bold color={C.fg}>◉</Text><Text>  </Text></Text>
-      <Text><Text color={C.purple}>•╱</Text><Text> </Text><Text color={C.green}>╲•</Text></Text>
-    </Box>
-  )
+const LOGO_PALETTE: Palette = { core: C.fg, sat: C.fg, trail: C.dim, faint: '#3a3b4a', r1: C.orange, r2: C.blue, r3: C.purple, r4: C.green }
+
+/** The turn's start, or the earliest running agent's: the mark moves for the whole turn. */
+function turnSince(s: Snapshot): number | null {
+  const starts = [s.lead.turnStartedAt, ...s.agents.filter(a => a.status === 'running').map(a => a.startedAt)].filter((x): x is number => x !== null)
+  return starts.length ? Math.min(...starts) : null
 }
 
-function Header({ el, s, width }: { el: El; s: Snapshot; width: number }) {
-  const { Box, Text } = el
+function Header({ el, s, width, act }: { el: El; s: Snapshot; width: number; act?: Actions }) {
+  const { Box, Text, Button } = el
+  const since = turnSince(s)
+  const isMoving = since !== null && !s.reduceMotion && !s.lead.isWaiting
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
-      <Box width={width} alignItems="center">
+      <Box width={width}>
         <Box width={7} />
-        <Box flexDirection="column" flexGrow={1} alignItems="center">
-          <Text bold color={C.fg}>N E X U S</Text>
-          <Text color={C.dim}>multi-agent command center</Text>
+        <Box flexGrow={1} justifyContent="center" alignItems="center" gap={2}>
+          <Orbit el={el} palette={LOGO_PALETTE} sprite={nexusLogo(isMoving ? s.now - since : null)} />
+          <Box flexDirection="column">
+            <Text bold color={C.fg}>N E X U S</Text>
+            <Text color={C.dim}>multi-agent command center</Text>
+          </Box>
         </Box>
-        <Box width={7} justifyContent="flex-end" paddingRight={1}><Emblem el={el} /></Box>
+        <Box width={7} justifyContent="flex-end" paddingRight={1}>
+          {Button && act ? (
+            <Button key="gear" hotkey="s" label="⚙" plain dimColor onPress={() => act.settings()} />
+          ) : (
+            <Text color={C.dim}>⚙</Text>
+          )}
+        </Box>
       </Box>
       <Text color={C.dim}>{'─'.repeat(width)}</Text>
     </Box>
@@ -248,12 +257,12 @@ function ModelLegend({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       {u.compactions > 0 && line('compactions', String(u.compactions), C.dim)}
       {(showContext || showCost) && <Text color="#3a3b4a">{'─'.repeat(Math.max(0, inner))}</Text>}
       {row(C.orange, modelLabel(s.lead.model), 'lead')}
-      {row(C.blue, haikuModel(s), 'swarm')}
+      {row(C.blue, haikuModel(s), 'agents')}
       {row(C.purple, advisorLabel(s), 'advisor')}
       {s.prefs.jev !== 'hidden' && row(C.green, 'jev', 'router')}
       <Text color="#3a3b4a">{'─'.repeat(Math.max(0, width - 4))}</Text>
       <Text><Text color={C.amber}>◈ </Text><Text color={C.dim}>Mode: </Text><Text color={C.fg}>{modeName(s)}</Text></Text>
-      <Text color={C.dim}>{fit(s.keptWidth ? '↔ drag edge to resize' : s.prefs.paneColumns >= 999 ? '↔ max width' : `↔ /swarm width ${s.prefs.paneColumns}`, inner)}</Text>
+      <Text color={C.dim}>{fit(s.keptWidth ? '↔ drag edge to resize' : s.prefs.paneColumns >= 999 ? '↔ max width' : `↔ /nexus width ${s.prefs.paneColumns}`, inner)}</Text>
     </Box>
   )
 }
@@ -293,7 +302,7 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
           <Orbit
             el={el}
             palette={PALETTE.advisor}
-            sprite={dualOrbit(s.prefs.advisorOrbit, p === null || s.reduceMotion ? null : s.now - advisorFxAt(s))}
+            sprite={dualOrbit(s.prefs.orbitStyle, p === null || s.reduceMotion ? null : s.now - advisorFxAt(s))}
           />
         </Box>
       )}
@@ -365,54 +374,65 @@ function LeadBox({ el, s }: { el: El; s: Snapshot }) {
   const asked = s.lead.requested
   const isFallback = asked !== null && s.lead.model !== null && family(asked) !== family(s.lead.model)
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={beat ? C.orangeHi : C.orange} paddingX={1}>
-      <Box gap={1}>
+    <Box flexDirection="column" borderStyle="single" borderColor={beat ? C.orangeHi : C.orange} paddingX={1} alignItems="center">
+      <Box gap={2} alignItems="center">
         <Orbit el={el} palette={PALETTE.lead} sprite={coreOrbit(isWorking(s) && !s.reduceMotion ? s.now - (s.lead.turnStartedAt ?? s.now) : null)} />
         <Box flexDirection="column">
-      <Text color={C.orange} bold>{modelLabel(s.lead.model)} · main session</Text>
-      <Box justifyContent="center"><Text color={C.fg}>edits + runs tests</Text></Box>
-      <Text>
-        <Text color={C.fg}>effort </Text>
-        <Text color={C.orange}>{'▮'.repeat(Math.max(0, level))}</Text>
-        <Text color={C.dim}>{'▯'.repeat(Math.max(0, 5 - level))}</Text>
-        <Text color={C.orange}> {effort}</Text>
-      </Text>
+          <Text color={C.orange} bold>{modelLabel(s.lead.model)} · main session</Text>
+          <Text color={C.fg}>edits + runs tests</Text>
+          <Text>
+            <Text color={C.fg}>effort </Text>
+            <Text color={C.orange}>{'▮'.repeat(Math.max(0, level))}</Text>
+            <Text color={C.dim}>{'▯'.repeat(Math.max(0, 5 - level))}</Text>
+            <Text color={C.orange}> {effort}</Text>
+          </Text>
         </Box>
       </Box>
       {isFallback && <Text color={C.amber}>asked {modelLabel(asked)} · answered by {modelLabel(s.lead.model)}</Text>}
       {s.mode.relaunch && <Text color={C.amber}>advisor change waits for a relaunch</Text>}
-      <Box justifyContent="center">
-        {s.lead.turnStartedAt === null ? (
-          <Text color={C.dim}>idle · {s.lead.steps} steps</Text>
-        ) : s.lead.isWaiting ? (
-          <Text color={C.amber}>◌ waiting for you</Text>
-        ) : (
-          <Text color={beat ? C.orangeHi : C.orange}>
-            {beat ? '●' : s.reduceMotion ? '●' : '○'} working {elapsed(s.now - s.lead.turnStartedAt)}
-          </Text>
-        )}
-      </Box>
+      {s.lead.turnStartedAt === null ? (
+        <Text color={C.dim}>idle · {s.lead.steps} steps</Text>
+      ) : s.lead.isWaiting ? (
+        <Text color={C.amber}>◌ waiting for you</Text>
+      ) : (
+        <Text color={beat ? C.orangeHi : C.orange}>
+          {beat ? '●' : s.reduceMotion ? '●' : '○'} working {elapsed(s.now - s.lead.turnStartedAt)}
+        </Text>
+      )}
     </Box>
   )
 }
 
+/** Fixed columns so every Jev row lines up: question, bar, p, verdict, choice, confidence. */
+const JEV_COLS = { q: 14, p: 6, verdict: 7, choice: 9, conf: 5 }
+const JEV_SPLIT = '#6fae86'
+
 function JevRow({ el, s, q, d, width }: { el: El; s: Snapshot; q: string; d: JevDecision | undefined; width: number }) {
   const { Text } = el
+  const tail = JEV_COLS.p + JEV_COLS.verdict + JEV_COLS.choice + JEV_COLS.conf
   if (!d) {
-    return <Text><Text color={C.fg}>{pad(q, 14)}</Text><Text color={C.dim}>{'░'.repeat(width)}  N/A</Text></Text>
+    return (
+      <Text>
+        <Text color={C.fg}>{pad(q, JEV_COLS.q)}</Text>
+        <Text color={C.dim}>{'░'.repeat(width)} {pad('N/A', tail)}</Text>
+      </Text>
+    )
   }
-  // A new answer fills its bar from empty to its probability.
+  // A new answer fills its bar from empty to its probability. Sharp and split
+  // are both green: sharp bright, split muted, and the word says which.
   const p = phase(s, 'jev', q)
   const grown = p === null || s.reduceMotion ? 1 : Math.min(1, p * 1.6)
   const [full, rest] = bar(d.p * grown, width)
-  const tone = d.isSharp ? C.green : C.orange
+  const tone = d.isSharp ? C.green : JEV_SPLIT
   return (
     <Text>
-      <Text color={C.fg}>{pad(q, 14)}</Text>
+      <Text color={C.fg}>{pad(q, JEV_COLS.q)}</Text>
       <Text color={tone} bold={p !== null}>{full}</Text>
       <Text color={C.dim}>{rest}</Text>
-      <Text color={tone}>  {d.p.toFixed(2)} {d.isSharp ? 'sharp' : 'split'}</Text>
-      <Text color={C.dim}> {pad(d.choice, 8)}{d.confidence === null ? '' : ` c${d.confidence.toFixed(2)}`}</Text>
+      <Text color={tone}> {pad(d.p.toFixed(2), JEV_COLS.p)}</Text>
+      <Text color={tone} bold={d.isSharp}>{pad(d.isSharp ? 'sharp' : 'split', JEV_COLS.verdict)}</Text>
+      <Text color={C.fg}>{pad(fit(d.choice, JEV_COLS.choice - 1), JEV_COLS.choice)}</Text>
+      <Text color={C.dim}>{pad(d.confidence === null ? '' : `c${d.confidence.toFixed(2)}`, JEV_COLS.conf)}</Text>
     </Text>
   )
 }
@@ -420,10 +440,11 @@ function JevRow({ el, s, q, d, width }: { el: El; s: Snapshot; q: string; d: Jev
 function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
   const j = s.jev
-  const barW = Math.max(4, Math.min(12, width - 46))
+  const fixed = JEV_COLS.q + 1 + JEV_COLS.p + JEV_COLS.verdict + JEV_COLS.choice + JEV_COLS.conf
+  const barW = Math.max(4, Math.min(12, width - 4 - fixed))
   const isOff = j.status === 'off'
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={isOff ? C.dim : C.green} paddingX={1} width={width}>
+    <Box flexDirection="column" borderStyle="single" borderColor={isOff ? C.dim : C.green} paddingX={1} width={width} alignItems="center">
       <Box justifyContent="center" gap={1}>
         <Orbit el={el} palette={PALETTE.jev} sprite={(() => { const r = lastRoute(s); return decisionMini(isOff ? null : r.outcome, r.ms, s.reduceMotion) })()} />
         <Text>
@@ -449,7 +470,7 @@ function JevBox({ el, s, width }: { el: El; s: Snapshot; width: number }) {
       {j.routing === 'active' && (
         <Text color={C.dim}>
           hints <Text color={C.green}>{j.hints}</Text> (followed {j.hintsFollowed}/{j.hintsChecked}) · retries{' '}
-          <Text color={C.green}>{j.retries}</Text> ({j.recovered} ok) · fallbacks <Text color={C.orange}>{j.fallbacks}</Text>
+          <Text color={C.green}>{j.retries}</Text> ({j.recovered} ok) · fallbacks <Text color={JEV_SPLIT}>{j.fallbacks}</Text>
         </Text>
       )}
     </Box>
@@ -503,7 +524,7 @@ export function CacheGuardBox({ el, s, width }: { el: El; s: Snapshot; width: nu
   if (!on) {
     return (
       <Box width={width} borderStyle="single" borderColor={C.dim} paddingX={1}>
-        <Text color={C.dim}>{mark} cache guard · off · /swarm cache on</Text>
+        <Text color={C.dim}>{mark} cache guard · off · /nexus cache on</Text>
       </Box>
     )
   }
@@ -656,7 +677,7 @@ export function AgentDetail({ el, a, s, act, width }: { el: El; a: SwarmAgent | 
       {Button && act.isFocused ? (
         <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
       ) : (
-        <Text color={C.dim}>/swarm back · or focus the pane (ctrl+x tab) and press b</Text>
+        <Text color={C.dim}>/nexus back · or focus the pane (ctrl+x tab) and press b</Text>
       )}
     </Box>
   )
@@ -673,23 +694,23 @@ export function SettingsView({ el, s, act, width }: { el: El; s: Snapshot; act: 
         Select && act.isFocused ? (
           <Select
             key={`set-${spec.key}`}
-            label={`${pad(spec.key, 20)}`}
+            label={`${pad(spec.key, 22)}`}
             value={prefValue(s.prefs, spec.key)}
             options={spec.options!.map(o => ({ value: o, label: o }))}
             onSelect={(value: string) => act.set(spec.key, value)}
           />
         ) : (
-          <Text><Text color={C.dim}>{pad(spec.key, 20)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text></Text>
+          <Text><Text color={C.dim}>{pad(spec.key, 22)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text></Text>
         ),
       )}
       {SETTINGS.filter(spec => spec.range).map(spec => (
-        <Text><Text color={C.dim}>{pad(spec.key, 20)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text><Text color={C.dim}>  /swarm settings {spec.key} {spec.range![0]}-{spec.range![1]}</Text></Text>
+        <Text><Text color={C.dim}>{pad(spec.key, 22)}</Text><Text color={C.fg}>{prefValue(s.prefs, spec.key)}</Text><Text color={C.dim}>  /nexus settings {spec.key} {spec.range![0]}-{spec.range![1]}</Text></Text>
       ))}
       <Text> </Text>
       {Button && act.isFocused ? (
         <Button key="back" hotkey="b" label="back to the diagram" plain dimColor onPress={() => act.back()} />
       ) : (
-        <Text color={C.dim}>ctrl+x tab to edit here · /swarm settings &lt;key&gt; &lt;value&gt; · /swarm back</Text>
+        <Text color={C.dim}>ctrl+x tab to edit here · /nexus settings &lt;key&gt; &lt;value&gt; · /nexus back</Text>
       )}
     </Box>
   )
@@ -801,9 +822,18 @@ function Diagram({ el, s, width: room, act }: { el: El; s: Snapshot; width: numb
 export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: number; act: Actions }) {
   const { Box } = el
   const right = width - ADVISOR_W - 2
+  // Settings take the whole pane: preferences only, no model or advisor panels beside them.
+  if (s.view.kind === 'settings') {
+    return (
+      <Box flexDirection="column" width={width}>
+        <Header el={el} s={s} width={width} act={act} />
+        <Box marginTop={1}><SettingsView el={el} s={s} act={act} width={width} /></Box>
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" width={width}>
-      <Header el={el} s={s} width={width} />
+      <Header el={el} s={s} width={width} act={act} />
       <Box gap={2} marginTop={1}>
         <Box flexDirection="column" justifyContent="space-between" width={ADVISOR_W}>
           <AdvisorColumn el={el} s={s} />
@@ -811,8 +841,6 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
         </Box>
         {s.view.kind === 'agent' ? (
           <AgentDetail el={el} a={s.agents.find(a => a.id === s.view.ref)} s={s} act={act} width={right} />
-        ) : s.view.kind === 'settings' ? (
-          <SettingsView el={el} s={s} act={act} width={right} />
         ) : (
           <Diagram el={el} s={s} width={right} act={act} />
         )}
@@ -829,7 +857,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
   if (s.view.kind === 'agent' || s.view.kind === 'settings') {
     return (
       <Box flexDirection="column" width={width}>
-        <Header el={el} s={s} width={width} />
+        <Header el={el} s={s} width={width} act={act} />
         {s.view.kind === 'agent' ? (
           <AgentDetail el={el} a={s.agents.find(x => x.id === s.view.ref)} s={s} act={act} width={width} />
         ) : (
@@ -840,7 +868,7 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
   }
   return (
     <Box flexDirection="column" width={width}>
-      <Header el={el} s={s} width={width} />
+      <Header el={el} s={s} width={width} act={act} />
       <Box borderStyle={p === null ? 'single' : 'double'} borderColor={isLit(s, p) ? C.purpleHi : C.purple} paddingX={1} marginTop={1}>
         <Text>
           <Text bold color={C.purple}>{advisorLabel(s)} advisor</Text>
@@ -897,7 +925,7 @@ export function StatusRow({ el, s }: { el: El; s: Snapshot }) {
   return (
     <Text>
       <Text color={C.fg}>haiku </Text>
-      <Text color={C.blue}>[{running > 0 ? 'swarming' : 'idle'}]</Text>
+      <Text color={C.blue}>[{running > 0 ? 'running' : 'idle'}]</Text>
       <Text color={C.fg}>   subagents </Text>
       <Text color={C.blue}>[{running}/{s.agents.length}]</Text>
       <Text color={C.fg}>   {advisorLabel(s).split(' ')[0]} </Text>
@@ -965,7 +993,7 @@ export function SpinnerLine({ el, s, word, suffix, isAgent }: { el: El; s: Snaps
       <Text color={tone}>{spin(s)} </Text>
       <Text color={tone} bold>{word}{suffix}</Text>
       <Text color={C.dim}>
-        {' '}({isAgent ? 'haiku · swarm' : `${modelLabel(s.lead.model)} · lead`}
+        {' '}({isAgent ? 'haiku · agent' : `${modelLabel(s.lead.model)} · lead`}
         {started === null ? '' : ` · ${elapsed(s.now - started)}`}
         {isAgent || s.lead.turnOutputTokens === 0 ? '' : ` · ↓ ${compact(s.lead.turnOutputTokens)} tokens`} · esc to interrupt)
       </Text>

@@ -14,7 +14,7 @@ export const DEFAULT_PREFS: Prefs = {
   layout: 'auto',
   animation: 'auto',
   agentDetail: 'full',
-  advisorOrbit: 'wide',
+  orbitStyle: 'wide',
   telemetry: { context: true, cost: true, usage: true, tokens: false },
   logRows: 4,
   paneColumns: PANE_MAX,
@@ -40,7 +40,8 @@ export function migrate(raw: unknown): Prefs {
     layout: pick(r.layout, ['auto', 'full', 'compact', 'minimal'], d.layout),
     animation: pick(r.animation, ['auto', 'full', 'reduced', 'off'], d.animation),
     agentDetail: pick(r.agentDetail, ['brief', 'full'], d.agentDetail),
-    advisorOrbit: pick(r.advisorOrbit, ['tight', 'wide'], d.advisorOrbit),
+    // Named advisorOrbit before 0.5: carried over.
+    orbitStyle: pick(r.orbitStyle ?? r.advisorOrbit, ['tight', 'wide'], d.orbitStyle),
     telemetry: {
       context: bool(t.context, d.telemetry.context),
       cost: bool(t.cost, d.telemetry.cost),
@@ -63,18 +64,18 @@ export function migrate(raw: unknown): Prefs {
   }
 }
 
-/** One setting by its dotted name: what `/swarm settings <key> <value>` accepts. */
+/** One setting by its dotted name: what `/nexus settings <key> <value>` accepts. */
 export const SETTINGS: { key: string; options?: string[]; range?: [number, number]; help: string }[] = [
   { key: 'layout', options: ['auto', 'full', 'compact', 'minimal'], help: 'dashboard layout' },
   { key: 'animation', options: ['auto', 'full', 'reduced', 'off'], help: 'motion (auto follows reduceMotion)' },
   { key: 'agentDetail', options: ['brief', 'full'], help: 'how much the agent view shows' },
-  { key: 'advisorOrbit', options: ['tight', 'wide'], help: 'advisor animation' },
+  { key: 'orbitStyle', options: ['tight', 'wide'], help: 'orbit animation style' },
   { key: 'telemetry.context', options: ['on', 'off'], help: 'context used / window' },
   { key: 'telemetry.cost', options: ['on', 'off'], help: 'session API est.' },
   { key: 'telemetry.usage', options: ['on', 'off'], help: 'plan usage bars' },
   { key: 'telemetry.tokens', options: ['on', 'off'], help: 'per-model tokens in the strip' },
   { key: 'logRows', range: [0, 6], help: 'session log rows' },
-  { key: 'paneColumns', range: [40, PANE_MAX], help: `pane width; ${PANE_MAX} = as wide as allowed (/swarm width max)` },
+  { key: 'paneColumns', range: [40, PANE_MAX], help: `pane width; ${PANE_MAX} = as wide as allowed (/nexus width max)` },
   { key: 'jev', options: ['bars', 'line', 'hidden'], help: 'Jev panel' },
   { key: 'escalation', options: ['ask', 'off'], help: 'stronger-mode suggestions' },
   { key: 'cacheGuard.enabled', options: ['on', 'off'], help: 'Cache Guard' },
@@ -87,7 +88,7 @@ export const SETTINGS: { key: string; options?: string[]; range?: [number, numbe
 
 export type SetResult = { ok: true; prefs: Prefs } | { ok: false; why: string }
 
-/** Applies `/swarm settings <key> <value>`; never accepts a value outside the setting's own. */
+/** Applies `/nexus settings <key> <value>`; never accepts a value outside the setting's own. */
 export function setPref(prefs: Prefs, key: string, value: string): SetResult {
   const spec = SETTINGS.find(s => s.key === key)
   if (!spec) return { ok: false, why: `unknown setting "${key}"` }

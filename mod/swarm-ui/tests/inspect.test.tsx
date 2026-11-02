@@ -50,7 +50,7 @@ async function texts($: any, isFocused = false): Promise<string> {
   return all
 }
 
-const run = ($: any, args: string) => ($ as any).command.run({ command: 'swarm', args })
+const run = ($: any, args: string) => ($ as any).command.run({ command: 'nexus', args })
 
 test('overlapping instances of one type get their own identity; a fallback agent is marked', async ($, on) => {
   engine(on)
@@ -136,7 +136,7 @@ test('an answer handed back through a tool call becomes the result; the working 
   await spawn($, 'swarm-grep', 'finds x', 'tu1')
   await $.tool.call({ tool: 'Bash', path: '/repo', command: 'grep -rn x', agentId: 'agent-1' } as any)
   await $.tool.call({ tool: 'SubagentHandback', result: 'x is defined in src/x.ts:12', agentId: 'agent-1' } as any)
-  const out = (await ($ as any).command.run({ command: 'swarm', args: 'inspect grep#1' })).text
+  const out = (await ($ as any).command.run({ command: 'nexus', args: 'inspect grep#1' })).text
   expect(out).toMatch(/x is defined in src\/x\.ts:12/)
   expect(out).toMatch(/files     \./)
 })

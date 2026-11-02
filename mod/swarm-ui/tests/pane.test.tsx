@@ -29,7 +29,7 @@ function engine(on: On) {
   on('fs.read', () => {
     throw new Error('no agent definition here')
   })
-  on('command.register', () => ({ value: { command: 'swarm' } }))
+  on('command.register', () => ({ value: { command: 'nexus' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('agent.spawn', () => ({ model: 'claude-haiku-5-5', agentId: 'agent-1' }))

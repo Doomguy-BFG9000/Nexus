@@ -1,5 +1,13 @@
 # Changelog (swarm-ui)
 
+## 0.5.0 (2026-11-02): NEXUS commands, help and onboarding
+- Commands move to the NEXUS namespace: `/nexus` (open, close, agents, inspect, usage, settings, layout, width, cache, doctor), `/nexus-mode`, `/nexus-jev`, `/nexus-help`, `/nexus-about`. `/swarm`, `/swarm-mode` and `/swarm-jev` still work as deprecated aliases and say where each moved.
+- `/nexus-help` and `/nexus-about` draw in the transcript with the NEXUS mark; plain text where nothing draws. `/nexus doctor` checks the install, read-only.
+- The NEXUS mark beside the wordmark moves through a whole turn (agents included) and settles when it ends.
+- A ⚙ in the header (click, or `s` with the pane focused) opens settings, which now fill the pane and show preferences only. `advisorOrbit` is renamed `orbitStyle`; stored values carry over.
+- The advisor orbit is redesigned: two satellites turning opposite ways on their own orbits, with trails, dispersal and reformation.
+- The lead box centres its orbit and text; Jev bars are green (sharp bright, split muted) in fixed, centred columns.
+
 ## 0.4.1 (2026-11-02): NEXUS polish
 - NEXUS branding in the pane: a centred spaced wordmark with its subtitle beneath, and room above it. Command and plugin ids are unchanged.
 - The running models form a vertical legend at the bottom of the left column, ending with `Mode: Balanced` and the resize keys (ctrl+x ←/→ while the pane has focus; dragging works too, up to Claude Code's 45% limit).

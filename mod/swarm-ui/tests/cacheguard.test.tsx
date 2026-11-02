@@ -52,7 +52,7 @@ function engine(on: On, w: W) {
 }
 
 const start = ($: any) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-const cache = async ($: any) => ((await ($ as any).command.run({ command: 'swarm', args: 'cache' })).text as string)
+const cache = async ($: any) => ((await ($ as any).command.run({ command: 'nexus', args: 'cache' })).text as string)
 async function turn($: any, id: string) {
   await $.turn.start({ text: 'work', turnId: id })
   const st = $.turn.step({ turnId: id, index: 0, model: 'claude-sonnet-5-5', effort: 'high', messageCount: 3 })
@@ -195,7 +195,7 @@ test('/swarm cache off stops a planned beat at once', async ($, on) => {
   const w = engine(on, {})
   await start($)
   await turn($, 't1')
-  await ($ as any).command.run({ command: 'swarm', args: 'cache off' })
+  await ($ as any).command.run({ command: 'nexus', args: 'cache off' })
   await w.clock.advance(2 * 60 * MIN)
   expect(w.forks).toEqual([])
 })
@@ -209,7 +209,7 @@ test('beats raise no Jev request, no dialog and no model change', async ($, on) 
   expect(w.forks.length).toBe(1)
   expect(w.fetches.length).toBe(before.fetches)
   expect(w.asks.length).toBe(before.asks)
-  expect(await ($ as any).command.run({ command: 'swarm-mode', args: 'status' }).then((r: any) => r.text)).toMatch(/Rewrite in force: none/)
+  expect(await ($ as any).command.run({ command: 'nexus-mode', args: 'status' }).then((r: any) => r.text)).toMatch(/Rewrite in force: none/)
 })
 
 test('the next real request after a beat is checked against the cache', async ($, on) => {

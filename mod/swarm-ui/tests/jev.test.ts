@@ -56,7 +56,7 @@ async function start($: any) {
 }
 
 async function status($: any): Promise<string> {
-  return (await ($ as any).command.run({ command: 'swarm-mode', args: 'status' })).text
+  return (await ($ as any).command.run({ command: 'nexus-mode', args: 'status' })).text
 }
 
 async function paneText($: any): Promise<string> {
@@ -91,7 +91,7 @@ test('a key from the Keychain: a real answer is drawn with p, confidence and sha
   // Only tool names and basenames leave the machine.
   expect(w.sent[0]!.body).not.toMatch(/\/r\//)
   const pane = await paneText($)
-  expect(pane).toMatch(/0\.91 sharp/)
+  expect(pane).toMatch(/0\.91 +sharp/)
   expect(pane).toMatch(/c0\.81/)
   expect(pane).toMatch(/agreed 1\/1/)
   expect(await status($)).toMatch(/Jev: on · 1 calls · \$0\.0000 · routing observe/)
@@ -112,7 +112,7 @@ test('a split answer is drawn as split, never promoted', async ($, on) => {
   await start($)
   await $.tool.call({ tool: 'Bash', command: 'ls' })
   await w.clock.settle()
-  expect(await paneText($)).toMatch(/0\.49 split/)
+  expect(await paneText($)).toMatch(/0\.49 +split/)
 })
 
 for (const [name, reply, reason] of [

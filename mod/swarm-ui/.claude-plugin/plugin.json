@@ -1,6 +1,6 @@
 {
   "name": "swarm-ui",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Claude Code's own terminal as a multi-agent command center: model modes, agent inspection, advisor and Jev telemetry, usage, Cache Guard",
   "types": "./types/index.d.ts",
   "userConfig": {

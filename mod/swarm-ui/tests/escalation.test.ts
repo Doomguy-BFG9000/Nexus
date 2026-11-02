@@ -85,8 +85,8 @@ test('approving an escalation switches the main model for the next request, this
   await step($)
   expect(w.models).toEqual(['opus'])
   expect(w.efforts).toEqual(['xhigh'])
-  const status = await ($ as any).command.run({ command: 'swarm-mode', args: 'status' })
-  expect(status.text).toMatch(/Swarm mode: Deep Engineering/)
+  const status = await ($ as any).command.run({ command: 'nexus-mode', args: 'status' })
+  expect(status.text).toMatch(/NEXUS mode: Deep Engineering/)
   expect(status.text).toMatch(/--resume sess-1 --model opus --effort xhigh --settings '\{"advisorModel":"fable"\}'/)
 })
 
@@ -131,7 +131,7 @@ test('Haiku settles only an ambiguous prompt, and only up to the cap', async ($,
 test('Maximum Reasoning under an Opus advisor is refused in-session, with the relaunch', async ($, on) => {
   const w = engine(on, { advisor: 'opus' })
   await start($)
-  const out = await ($ as any).command.run({ command: 'swarm-mode', args: 'max' })
+  const out = await ($ as any).command.run({ command: 'nexus-mode', args: 'max' })
   expect(out.text).toMatch(/not applied in this session: fable \(rank 9\) outranks the opus advisor/)
   expect(out.text).toMatch(/--model fable --effort max --settings '\{"advisorModel":"fable"\}'/)
   await step($)
@@ -141,7 +141,7 @@ test('Maximum Reasoning under an Opus advisor is refused in-session, with the re
 test('Maximum Reasoning in a session launched with a Fable advisor applies at once', async ($, on) => {
   const w = engine(on, { advisor: 'fable' })
   await start($)
-  const out = await ($ as any).command.run({ command: 'swarm-mode', args: 'max' })
+  const out = await ($ as any).command.run({ command: 'nexus-mode', args: 'max' })
   expect(out.text).not.toMatch(/relaunch/)
   await step($)
   expect(w.models).toEqual(['fable'])
@@ -151,11 +151,11 @@ test('Maximum Reasoning in a session launched with a Fable advisor applies at on
 test('manual choice with a cost confirmation, then back to the default', async ($, on) => {
   const w = engine(on, { advisor: 'opus', answers: ['Deep Engineering', 'Apply'] })
   await start($)
-  const chosen = await ($ as any).command.run({ command: 'swarm-mode', args: '' })
+  const chosen = await ($ as any).command.run({ command: 'nexus-mode', args: '' })
   expect(w.asked[1]).toMatch(/Deep Engineering costs more/)
   expect(chosen.text).toMatch(/Applied now, this session only: main opus/)
   await step($)
-  const reset = await ($ as any).command.run({ command: 'swarm-mode', args: 'default' })
+  const reset = await ($ as any).command.run({ command: 'nexus-mode', args: 'default' })
   expect(reset.text).toMatch(/as launched/)
   await step($, 1)
   expect(w.models).toEqual(['opus', 'claude-sonnet-5-5'])
@@ -164,7 +164,7 @@ test('manual choice with a cost confirmation, then back to the default', async (
 test('cancelling the cost confirmation changes nothing', async ($, on) => {
   const w = engine(on, { advisor: 'opus', answers: ['Deep Engineering', 'Cancel'] })
   await start($)
-  const out = await ($ as any).command.run({ command: 'swarm-mode', args: '' })
+  const out = await ($ as any).command.run({ command: 'nexus-mode', args: '' })
   expect(out.text).toMatch(/unchanged/)
   await step($)
   expect(w.models).toEqual(['claude-sonnet-5-5'])
@@ -173,7 +173,7 @@ test('cancelling the cost confirmation changes nothing', async ($, on) => {
 test('subagent requests are never rewritten', async ($, on) => {
   const w = engine(on, { advisor: 'opus' })
   await start($)
-  await ($ as any).command.run({ command: 'swarm-mode', args: 'deep' })
+  await ($ as any).command.run({ command: 'nexus-mode', args: 'deep' })
   const stream = $.turn.step({ turnId: 't2', index: 0, model: 'claude-haiku-5-5', messageCount: 1, agentId: 'agent-9' })
   for await (const _ of stream) {
     // drain

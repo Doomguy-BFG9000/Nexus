@@ -168,8 +168,8 @@ export type Prefs = {
   /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
   animation: 'auto' | 'full' | 'reduced' | 'off'
   agentDetail: 'brief' | 'full'
-  /** The advisor's Dual-Orbit: tight and quick, or wide and slow. */
-  advisorOrbit: 'tight' | 'wide'
+  /** The orbit animation: tight and quick, or wide and slow. */
+  orbitStyle: 'tight' | 'wide'
   telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
   /** Session log rows above the prompt, 0 to 6. */
   logRows: number

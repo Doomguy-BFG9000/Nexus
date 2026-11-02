@@ -24,6 +24,7 @@ import {
   plan,
 } from './modes'
 import { agentDetail, agentList } from './inspect'
+import { AboutView, HelpView, NEXUS_VERSION, aboutText, helpText } from './docs'
 import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
 import type { Prefs } from './prefs'
 import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
@@ -134,7 +135,8 @@ export const tick = atom({ plugin: 'swarm-ui', key: 'tick' } as const, 0)
 export const LOG_KEEP = 50
 
 const PANE = 'swarm'
-const PANE_OPEN = { id: PANE, title: 'swarm', columns: 92, backgroundColor: C.bg }
+// The pane's id stays 'swarm' so kept widths and open panes carry over; its title is the product's.
+const PANE_OPEN = { id: PANE, title: 'NEXUS', columns: 92, backgroundColor: C.bg }
 /** 10 frames a second while an effect plays; 1 under reduced motion (counters only). */
 const FRAME_MS = 100
 const STILL_MS = 1000
@@ -254,7 +256,7 @@ async function countStep($: EngineInterface, key: string, model: string | undefi
   await update($, models, rows => addUsage(rows, model, u, isAgent))
 }
 
-/** /swarm usage: every figure with its source and age. */
+/** /nexus usage: every figure with its source and age. */
 async function usageText($: EngineInterface): Promise<string> {
   await refreshUsage($)
   const [u, md, j, now] = await Promise.all([read($, usage), read($, models), read($, jev), $.clock.now()])
@@ -425,7 +427,7 @@ async function guardText($: EngineInterface): Promise<string> {
     'A warm beat does not guarantee the next request hits the cache; "after beat" shows what it actually did.',
     'Beats are Claude Code forks: no turn, no transcript entry, tools denied; this plugin\'s own hooks never see them.',
     'Inspired by Cachebeat by Abdur Rahim (@ARahim3): https://github.com/ARahim3/cachebeat (no endorsement implied).',
-    'Change: /swarm cache on|off · /swarm settings cacheGuard.<key> <value>',
+    'Change: /nexus cache on|off · /nexus settings cacheGuard.<key> <value>',
   ].join('\n')
 }
 
@@ -451,14 +453,14 @@ async function savePrefs($: EngineInterface, p: Prefs) {
   }
 }
 
-/** `/swarm settings [key value]`: show, or change one, for this and later sessions. */
+/** `/nexus settings [key value]`: show, or change one, for this and later sessions. */
 async function settingsCommand($: EngineInterface, args: string): Promise<string> {
   const [key, value] = args.split(/\s+/).filter(Boolean)
   const current = await read($, prefs)
   if (!key) {
     await update($, view, () => ({ kind: 'settings' as const, ref: null }))
     const rows = SETTINGS.map(spec => `  ${spec.key.padEnd(20)} ${prefValue(current, spec.key).padEnd(9)} ${spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`}  · ${spec.help}`)
-    return ['Swarm settings (kept in the plugin store; Claude Code settings are not touched):', ...rows, '', 'Change one: /swarm settings <key> <value>'].join('\n')
+    return ['NEXUS settings (kept in the plugin store; Claude Code settings are not touched):', ...rows, '', 'Change one: /nexus settings <key> <value>'].join('\n')
   }
   if (value === undefined) return `${key} is ${prefValue(current, key)}`
   const out = setPref(current, key, value)
@@ -487,7 +489,7 @@ function paneOpen(p: Prefs) {
   return { ...PANE_OPEN, columns: p.paneColumns }
 }
 
-/** `/swarm width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
+/** `/nexus width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
 async function widthCommand($: EngineInterface, arg: string): Promise<string> {
   const p = await read($, prefs)
   const isMax = p.paneColumns >= PANE_MAX
@@ -497,7 +499,7 @@ async function widthCommand($: EngineInterface, arg: string): Promise<string> {
     : arg === 'narrower' ? (isMax ? 100 : p.paneColumns - 10)
     : Number(arg)
   if (!arg || !Number.isFinite(want)) {
-    return `The pane asks for ${isMax ? 'the maximum width' : `${p.paneColumns} columns`}. Usage: /swarm width max | <40-200> | wider | narrower`
+    return `The pane asks for ${isMax ? 'the maximum width' : `${p.paneColumns} columns`}. Usage: /nexus width max | <40-200> | wider | narrower`
   }
   const columns = want >= PANE_MAX ? PANE_MAX : Math.round(Math.min(200, Math.max(40, want)))
   await applyPrefs($, p, { ...p, paneColumns: columns })
@@ -507,7 +509,7 @@ async function widthCommand($: EngineInterface, arg: string): Promise<string> {
     return [
       `Not resized. The pane is ${kept} columns because you resized it by hand once, and Claude Code always keeps a hand-set width over what a plugin asks for.`,
       'Resize it by dragging the pane\'s left edge, or click the pane and press ctrl+x then ← (wider) or → (narrower).',
-      `To let /swarm width control it again: quit every Claude Code window, then remove "dockColumns" from "pluginPanes" in ~/.claude.json. (${columns} is saved for that.)`,
+      `To let /nexus width control it again: quit every Claude Code window, then remove "dockColumns" from "pluginPanes" in ~/.claude.json. (${columns} is saved for that.)`,
     ].join('\n')
   }
   return columns >= PANE_MAX
@@ -524,6 +526,145 @@ async function keptDockColumns($: EngineInterface): Promise<number | null> {
   } catch {
     return null
   }
+}
+
+/** The commands NEXUS registers. A legacy name runs the same handler and says where it moved. */
+export const COMMANDS: { name: string; description: string; run: 'nexus' | 'mode' | 'jev' | 'help' | 'about'; legacyOf?: string }[] = [
+  { name: 'nexus', description: 'NEXUS dashboard: open, close, agents, inspect, usage, settings, layout, width, cache, doctor', run: 'nexus' },
+  { name: 'nexus-mode', description: 'Model mode for this session: balanced, deep, max, default, status', run: 'mode' },
+  { name: 'nexus-jev', description: 'Jev routing: status, active (after calibration), observe, off, calibrate', run: 'jev' },
+  { name: 'nexus-help', description: 'Every NEXUS command and shortcut', run: 'help' },
+  { name: 'nexus-about', description: 'What NEXUS is and how to start', run: 'about' },
+  { name: 'swarm', description: 'Deprecated: use /nexus', run: 'nexus', legacyOf: 'nexus' },
+  { name: 'swarm-mode', description: 'Deprecated: use /nexus-mode', run: 'mode', legacyOf: 'nexus-mode' },
+  { name: 'swarm-jev', description: 'Deprecated: use /nexus-jev', run: 'jev', legacyOf: 'nexus-jev' },
+]
+
+async function runCommand($: EngineInterface, which: (typeof COMMANDS)[number]['run'], args: string): Promise<{ text?: string }> {
+  if (which === 'mode') return { text: await modeCommand($, args) }
+  if (which === 'jev') return { text: await jevCommand($, args) }
+  if (which === 'help') return placeDoc($, 'help')
+  if (which === 'about') return placeDoc($, 'about')
+  return nexusCommand($, args)
+}
+
+let docCount = 0
+
+/** Draws a help or about view as a row in the transcript; plain text where nothing draws. */
+async function placeDoc($: EngineInterface, kind: 'help' | 'about'): Promise<{ text?: string }> {
+  const surface = await $.session.surface().catch(() => null)
+  if (!surface) return { text: kind === 'help' ? helpText() : aboutText() }
+  docCount += 1
+  await $.ui.place({ id: `${kind}-${docCount}` })
+  return {}
+}
+
+async function nexusCommand($: EngineInterface, args: string): Promise<{ text?: string }> {
+  const [sub = '', ...rest] = args.trim().split(/\s+/)
+  const arg = rest.join(' ')
+  const list = await read($, agents)
+  if (sub === 'agents') return { text: agentList(list) }
+  if (sub === 'inspect') {
+    const agent = arg ? findAgent(list, arg) : list.find(a => a.status === 'running') ?? list.at(-1)
+    if (!agent) return { text: list.length ? `No agent "${arg}".\n${agentList(list)}` : 'No agents this session yet.' }
+    await update($, view, () => ({ kind: 'agent' as const, ref: agent.id }))
+    return { text: agentDetail(agent, await $.clock.now()) }
+  }
+  if (sub === 'settings') return { text: await settingsCommand($, arg) }
+  if (sub === 'width') return { text: await widthCommand($, arg) }
+  if (sub === 'usage') return { text: await usageText($) }
+  if (sub === 'doctor') return { text: await doctorText($) }
+  if (sub === 'help') return placeDoc($, 'help')
+  if (sub === 'about') return placeDoc($, 'about')
+  if (sub === 'cache') {
+    if (arg === 'on' || arg === 'off') {
+      const out = await settingsCommand($, `cacheGuard.enabled ${arg}`)
+      return { text: `${out}\n${await guardText($)}` }
+    }
+    return { text: await guardText($) }
+  }
+  if (sub === 'layout') return { text: await settingsCommand($, `layout ${arg}`) }
+  if (sub === 'back') {
+    await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
+    return { text: 'NEXUS: diagram.' }
+  }
+  if (sub === 'close') {
+    await $.ui.close({ id: PANE }).catch(() => undefined)
+    return { text: 'NEXUS closed. /nexus opens it again.' }
+  }
+  if (sub && sub !== 'open') return { text: `Unknown "/nexus ${sub}". /nexus-help lists every command.` }
+  const opened = await $.ui.open(paneOpen(await read($, prefs)))
+  return {
+    text: opened.isPlaced
+      ? 'NEXUS opened. Click it (or ctrl+x tab) to focus: 1-9 inspect an agent, s opens settings. /nexus-help for more.'
+      : `NEXUS waits: ${opened.reason}`,
+  }
+}
+
+async function modeCommand($: EngineInterface, args: string): Promise<string> {
+  const arg = args.trim().toLowerCase()
+  if (arg === '') return chooseMode($)
+  if (arg === 'status') return statusText($)
+  if (arg === 'default' || arg === 'reset' || arg === 'launched') return applyMode($, null, '/nexus-mode')
+  const id = MODE_IDS.find(m => m === arg || MODES[m].label.toLowerCase().startsWith(arg))
+  if (!id) return `Unknown mode "${arg}".\n${await statusText($)}`
+  return applyMode($, id, '/nexus-mode')
+}
+
+async function jevCommand($: EngineInterface, args: string): Promise<string> {
+  const arg = args.trim().toLowerCase()
+  if (arg === '' || arg === 'status') return jevStatus($)
+  if (arg === 'observe' || arg === 'off') {
+    await setRouting($, arg)
+    await addLog($, { who: 'jev', kind: 'mode', text: `routing ${arg}`, detail: '/nexus-jev' })
+    return `Jev routing is ${arg} from now on${arg === 'off' ? ': no requests are sent' : ': answers are drawn, nothing is changed'}.`
+  }
+  if (arg === 'active' || arg === 'calibrate') {
+    const j = await read($, jev)
+    if (arg === 'active' && j.calibration?.passed) {
+      await setRouting($, 'active')
+      return 'Jev routing is active (calibration passed earlier this session).'
+    }
+    return calibrate($)
+  }
+  return `Unknown "${arg}".\n${await jevStatus($)}`
+}
+
+/** /nexus doctor: what NEXUS can check about its own install, read only. */
+async function doctorText($: EngineInterface): Promise<string> {
+  const ok = (good: boolean, text: string) => `  ${good ? '✓' : '!'} ${text}`
+  const [m, l, j, g, p] = await Promise.all([read($, mode), read($, lead), read($, jev), read($, guard), read($, prefs)])
+  const version = await $.session.version().then(v => (v as { version?: string }).version ?? JSON.stringify(v)).catch(() => 'unknown')
+  const surface = await $.session.surface().catch(() => null)
+  let tui: unknown = null
+  try {
+    tui = await $.settings.read({ key: 'tui' } as any)
+  } catch {
+    tui = null
+  }
+  const isFullscreen = tui === 'fullscreen' || (tui as Record<string, unknown> | null)?.tui === 'fullscreen'
+  const panes = await $.ui.panes().catch(() => [] as readonly { id: string }[])
+  const defs = await Promise.all(
+    ['swarm-search', 'swarm-grep', 'swarm-audit'].map(async t => {
+      for (const dir of [`${cwd}/.claude/agents`, `${home}/.claude/agents`]) if (await $.fs.exists(`${dir}/${t}.md`).catch(() => false)) return true
+      return false
+    }),
+  )
+  const kept = await keptDockColumns($)
+  const pair = m.sessionAdvisor && (l.model ?? m.sessionModel) ? pairing(l.model ?? m.sessionModel!, m.sessionAdvisor) : null
+  return [
+    'NEXUS doctor',
+    ok(true, `Claude Code ${version} · NEXUS ${NEXUS_VERSION} (tested on 2.1.316)`),
+    ok(surface === 'terminal', `surface: ${surface ?? 'none'}${surface === 'terminal' ? '' : ' (the dashboard draws in the terminal only)'}`),
+    ok(isFullscreen, isFullscreen ? 'fullscreen TUI: the pane can dock' : 'fullscreen TUI is off: the pane sits above the prompt instead of docking ("tui": "fullscreen")'),
+    ok(panes.some(x => x.id === PANE), panes.some(x => x.id === PANE) ? 'dashboard pane is open' : 'dashboard pane is closed (/nexus opens it)'),
+    ok(kept === null, kept === null ? 'pane width follows /nexus width' : `pane width is kept at ${kept} columns from a hand resize (drag to change)`),
+    ok(defs.every(Boolean), `agent definitions: ${['search', 'grep', 'audit'].map((n, i) => `${n} ${defs[i] ? 'found' : 'missing'}`).join(', ')}`),
+    ok(!pair || pair.ok, m.sessionAdvisor ? `advisor ${m.sessionAdvisor}: ${!pair ? 'not checked yet' : pair.ok ? 'valid for the current lead' : pair.reason}` : 'no advisor configured'),
+    ok(Boolean(jevKey), jevKey ? `Jev key found (not shown) · ${j.status} · routing ${j.routing}` : 'Jev: no key (optional: TYPESAFE_API_KEY or Keychain claude-swarm-typesafe)'),
+    ok(g.status !== 'ERROR', `Cache Guard: ${p.cacheGuard.enabled ? `${g.status.toLowerCase()}${g.reason ? ` (${g.reason})` : ''}` : 'off (optional)'}`),
+    ok(true, `preferences v${p.version} · layout ${p.layout} · animation ${p.animation}`),
+  ].join('\n')
 }
 
 /** Applies `change` to one agent by id. */
@@ -572,7 +713,7 @@ async function recordAgentResult($: EngineInterface, toolUseId: string | undefin
   )
 }
 
-/** An instance by its number in /swarm agents (1-based) or its label. */
+/** An instance by its number in /nexus agents (1-based) or its label. */
 export function findAgent(list: SwarmAgent[], ref: string): SwarmAgent | undefined {
   const n = Number(ref)
   if (Number.isInteger(n) && n >= 1) return list[n - 1]
@@ -829,7 +970,7 @@ async function jevStatus($: EngineInterface): Promise<string> {
     `Hints ${j.hints} (followed ${j.hintsFollowed}/${j.hintsChecked}) · retries ${j.retries} (recovered ${j.recovered}) · fallbacks ${j.fallbacks}`,
     `Observed: ${j.decisions} decisions · tool agreed ${j.toolAgreed}/${j.toolChecked} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} of $0.50`,
     `Last: ${j.lastRoute ?? 'none'}`,
-    'Usage: /swarm-jev [status|active|observe|off|calibrate]',
+    'Usage: /nexus-jev [status|active|observe|off|calibrate]',
   ].join('\n')
 }
 
@@ -865,7 +1006,7 @@ async function applyMode($: EngineInterface, id: ModeId | null, via: string): Pr
     await addFx($, 'mode', null)
     await addLog($, { who: 'mode', kind: 'mode', text: 'back to the session as launched', detail: via })
     return [
-      `Swarm mode: as launched (${modelLabel(m.sessionModel)} · advisor ${m.sessionAdvisor ? modelLabel(m.sessionAdvisor) : 'off'}).`,
+      `NEXUS mode: as launched (${modelLabel(m.sessionModel)} · advisor ${m.sessionAdvisor ? modelLabel(m.sessionAdvisor) : 'off'}).`,
       'The model rewrite is off from the next request. Nothing was written to your settings.',
     ].join('\n')
   }
@@ -884,7 +1025,7 @@ async function applyMode($: EngineInterface, id: ModeId | null, via: string): Pr
     text: p.now ? `${p.mode.label}${p.isComplete ? '' : ' (advisor on relaunch)'}` : `${p.mode.label} needs a relaunch`,
     detail: via,
   })
-  const lines = [`Swarm mode: ${p.mode.label}. Cost: ${p.mode.cost}.`]
+  const lines = [`NEXUS mode: ${p.mode.label}. Cost: ${p.mode.cost}.`]
   if (p.now) {
     lines.push(`Applied now, this session only: main ${p.now.main} · effort ${p.now.effort}, from the next request.`)
     lines.push('A new effort level starts with your next message; steps that only carry tool results keep the old one.')
@@ -906,16 +1047,16 @@ async function chooseMode($: EngineInterface): Promise<string> {
   const [m, l] = await Promise.all([read($, mode), read($, lead)])
   let pick: string
   try {
-    pick = await $.ui.ask(`Swarm mode is ${modeLabel(m)}, running ${describeRunning(m, l)}. Which mode for the rest of this session?`, {
+    pick = await $.ui.ask(`NEXUS mode is ${modeLabel(m)}, running ${describeRunning(m, l)}. Which mode for the rest of this session?`, {
       options: [...PICK],
-      header: 'Swarm mode',
+      header: 'NEXUS mode',
     })
   } catch {
-    return 'Swarm mode unchanged (dialog dismissed).'
+    return 'NEXUS mode unchanged (dialog dismissed).'
   }
   if (pick === 'As launched') return applyMode($, null, 'chosen')
   const id = MODE_IDS[PICK.indexOf(pick as (typeof PICK)[number])]
-  if (!id) return `Swarm mode unchanged: "${pick}" is not a mode.`
+  if (!id) return `NEXUS mode unchanged: "${pick}" is not a mode.`
   if (MODES[id].level > currentLevel(m, l.model)) {
     const p = plan(id, m.sessionAdvisor, sessionId)
     const where = p.now ? (p.isComplete ? 'Applies now.' : 'The main model applies now; the advisor needs a relaunch.') : 'Needs a relaunch.'
@@ -928,7 +1069,7 @@ async function chooseMode($: EngineInterface): Promise<string> {
     } catch {
       ok = 'Cancel'
     }
-    if (ok !== 'Apply') return 'Swarm mode unchanged.'
+    if (ok !== 'Apply') return 'NEXUS mode unchanged.'
   }
   return applyMode($, id, 'chosen')
 }
@@ -936,7 +1077,7 @@ async function chooseMode($: EngineInterface): Promise<string> {
 async function statusText($: EngineInterface): Promise<string> {
   const [m, l, j] = await Promise.all([read($, mode), read($, lead), read($, jev)])
   const lines = [
-    `Swarm mode: ${modeLabel(m)}`,
+    `NEXUS mode: ${modeLabel(m)}`,
     `Running: ${describeRunning(m, l)}${l.requested ? ` (last request asked for ${l.requested})` : ''}`,
     `Session launched with: ${modelLabel(m.sessionModel)} · advisor ${m.sessionAdvisor ?? 'off'} (from settings or --settings)`,
     `Rewrite in force: ${m.main ? `main ${m.main} · effort ${m.effort}` : 'none'}`,
@@ -944,7 +1085,7 @@ async function statusText($: EngineInterface): Promise<string> {
     `Jev: ${j.status}${j.reason ? ` (${j.reason})` : ''} · ${j.calls} calls · $${j.spentUsd.toFixed(4)} · routing ${j.routing}`,
   ]
   if (m.relaunch) lines.push(`Relaunch for the full mode: ${m.relaunch}`)
-  lines.push('Usage: /swarm-mode [balanced|deep|max|default|status]')
+  lines.push('Usage: /nexus-mode [balanced|deep|max|default|status]')
   return lines.join('\n')
 }
 
@@ -981,7 +1122,7 @@ async function escalate($: EngineInterface, text: string) {
   try {
     pick = await $.ui.ask(
       `This looks like a ${rec.label} task (${reasons.join('; ')}). Switch from ${modeLabel(m)}? It ${where}; cost: ${rec.cost}.`,
-      { options: [keep, go, 'Choose manually'], header: 'Swarm mode' },
+      { options: [keep, go, 'Choose manually'], header: 'NEXUS mode' },
     )
   } catch {
     pick = keep
@@ -1034,21 +1175,11 @@ export const register: Register = (on, options) => {
     // A reload loses the module's timer: pick the guard up again from its state.
     if ((await read($, prefs)).cacheGuard.enabled) await guardTick($)
 
-    await $.command.register({
-      name: 'swarm',
-      description: 'Show the Sonnet / Haiku swarm / Opus advisor / Jev pane',
-    })
-    await $.command.register({
-      name: 'swarm-mode',
-      description: 'View or change the model mode for this session: balanced, deep, max, default, status',
-    })
-    await $.command.register({
-      name: 'swarm-jev',
-      description: 'Jev routing for this session: status, active (after calibration), observe, off, calibrate',
-    })
+    // NEXUS is the public namespace; the /swarm names stay as deprecated aliases.
+    for (const c of COMMANDS) await $.command.register({ name: c.name, description: c.description })
     // Asked for in /config: calibrate in the background, act only once it passes.
     if (jevKey && opts.jevRouting === 'active' && routing !== 'active') void calibrate($)
-    // Unasked, the engine seats it only on a wide terminal; /swarm opens it anywhere.
+    // Unasked, the engine seats it only on a wide terminal; /nexus opens it anywhere.
     {
       const p = await read($, prefs)
       if (p.layout !== 'minimal') void $.ui.open(paneOpen(p))
@@ -1057,64 +1188,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'swarm' }, async ($, e) => {
-    const [sub = '', ...rest] = e.args.trim().split(/\s+/)
-    const arg = rest.join(' ')
-    const list = await read($, agents)
-    if (sub === 'agents') return { text: agentList(list) }
-    if (sub === 'inspect') {
-      const agent = arg ? findAgent(list, arg) : list.find(a => a.status === 'running') ?? list.at(-1)
-      if (!agent) return { text: list.length ? `No agent "${arg}".\n${agentList(list)}` : 'No agents this session yet.' }
-      await update($, view, () => ({ kind: 'agent' as const, ref: agent.id }))
-      return { text: agentDetail(agent, await $.clock.now()) }
-    }
-    if (sub === 'settings') return { text: await settingsCommand($, arg) }
-    if (sub === 'width') return { text: await widthCommand($, arg) }
-    if (sub === 'usage') return { text: await usageText($) }
-    if (sub === 'cache') {
-      if (arg === 'on' || arg === 'off') {
-        const out = await settingsCommand($, `cacheGuard.enabled ${arg}`)
-        return { text: `${out}\n${await guardText($)}` }
-      }
-      return { text: await guardText($) }
-    }
-    if (sub === 'layout') return { text: await settingsCommand($, `layout ${arg}`) }
-    if (sub === 'back') {
-      await update($, view, () => ({ kind: 'diagram' as const, ref: null }))
-      return { text: 'Swarm pane: diagram.' }
-    }
-    const opened = await $.ui.open(paneOpen(await read($, prefs)))
-    return { text: opened.isPlaced ? 'NEXUS pane opened. Click it (or ctrl+x tab) to focus, then 1-9 inspect an agent; /swarm width resizes it.' : `Swarm pane waits: ${opened.reason}` }
-  })
-
-  on('command.run', { command: 'swarm-mode' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
-    if (arg === '') return { text: await chooseMode($) }
-    if (arg === 'status') return { text: await statusText($) }
-    if (arg === 'default' || arg === 'reset' || arg === 'launched') return { text: await applyMode($, null, '/swarm-mode') }
-    const id = MODE_IDS.find(m => m === arg || MODES[m].label.toLowerCase().startsWith(arg))
-    if (!id) return { text: `Unknown mode "${arg}".\n${await statusText($)}` }
-    return { text: await applyMode($, id, '/swarm-mode') }
-  })
-
-  on('command.run', { command: 'swarm-jev' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
-    if (arg === '' || arg === 'status') return { text: await jevStatus($) }
-    if (arg === 'observe' || arg === 'off') {
-      await setRouting($, arg)
-      await addLog($, { who: 'jev', kind: 'mode', text: `routing ${arg}`, detail: '/swarm-jev' })
-      return { text: `Jev routing is ${arg} from now on${arg === 'off' ? ': no requests are sent' : ': answers are drawn, nothing is changed'}.` }
-    }
-    if (arg === 'active' || arg === 'calibrate') {
-      const j = await read($, jev)
-      if (arg === 'active' && j.calibration?.passed) {
-        await setRouting($, 'active')
-        return { text: 'Jev routing is active (calibration passed earlier this session).' }
-      }
-      return { text: await calibrate($) }
-    }
-    return { text: `Unknown "${arg}".\n${await jevStatus($)}` }
-  })
+  for (const c of COMMANDS) {
+    on('command.run', { command: c.name }, async ($, e) => {
+      const out = await runCommand($, c.run, e.args)
+      if (!c.legacyOf) return out
+      const note = `(/${c.name} is now /${c.legacyOf}; the old name will go away in a later version.)`
+      return { ...out, text: out.text ? `${out.text}\n${note}` : note }
+    })
+  }
 
   // ---- prompts: offer a stronger mode, never switch without a yes ----------
   on('prompt.submit', async ($, e, next) => {
@@ -1221,7 +1302,7 @@ export const register: Register = (on, options) => {
         contextAtCall: before,
         history: [...a.history, { at: use.startedAt, ms, context: before }].slice(-5),
       }))
-      await addFx($, 'advisor', use.id, 2 * DUAL[(await read($, prefs)).advisorOrbit].cycleMs)
+      await addFx($, 'advisor', use.id, 2 * DUAL[(await read($, prefs)).orbitStyle].cycleMs)
       await addLog($, {
         who: 'advisor',
         kind: 'advisor',
@@ -1381,12 +1462,20 @@ export const register: Register = (on, options) => {
       isFocused: e.props.isFocused,
       inspect: id => void update($, view, () => ({ kind: 'agent' as const, ref: id })),
       back: () => void update($, view, () => ({ kind: 'diagram' as const, ref: null })),
+      settings: () => void update($, view, () => ({ kind: 'settings' as const, ref: null })),
       set: (key, value) => void settingsCommand($, `${key} ${value}`),
     }
     const layout = e.surface === 'terminal' ? resolveLayout(s.prefs, width, e.props.placement) : 'list'
     if (layout === 'list') return <PaneList el={el} s={s} />
     if (layout === 'full') return <PaneFull el={el} s={s} width={width} act={act} />
     return <PaneCompact el={el} s={s} width={width} act={act} />
+  })
+
+  // /nexus-help and /nexus-about, drawn as rows of the transcript.
+  on('ui.render', { component: 'Placed' }, async ($, e, next) => {
+    if (e.props.plugin !== 'swarm-ui' || !/^(help|about)-/.test(e.props.id)) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return e.props.id.startsWith('help-') ? <HelpView el={{ Box, Text }} /> : <AboutView el={{ Box, Text }} />
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

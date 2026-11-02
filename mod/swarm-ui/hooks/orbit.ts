@@ -7,12 +7,13 @@
 // caller passes a phase taken from a real event (a running agent, a working
 // lead, a reported advisor call, a Jev answer, a Cache Guard refresh).
 
-export type Tone = 'core' | 'sat' | 'trail' | 'faint' | 'blank'
+/** Plain tones, plus four role tones (lead, agents, advisor, Jev) for the NEXUS mark. */
+export type Tone = 'core' | 'sat' | 'trail' | 'faint' | 'blank' | 'r1' | 'r2' | 'r3' | 'r4'
 export type Run = { text: string; tone: Tone }
 export type Sprite = Run[][]
 
 type Cell = { ch: string; tone: Tone; rank: number }
-const RANK: Record<Tone, number> = { blank: 0, faint: 1, trail: 2, sat: 3, core: 4 }
+const RANK: Record<Tone, number> = { blank: 0, faint: 1, trail: 2, sat: 3, r1: 3, r2: 3, r3: 3, r4: 3, core: 4 }
 
 export const ease = (t: number) => -(Math.cos(Math.PI * Math.min(1, Math.max(0, t))) - 1) / 2
 const TAU = Math.PI * 2
@@ -173,73 +174,92 @@ export function miniOrbit(p: AgentPhase, isStill: boolean): Sprite {
 export type DualVariant = 'tight' | 'wide'
 
 export const DUAL = {
-  tight: { w: 13, h: 5, rMax: 1.6, turns: 2, cycleMs: 2400 },
-  wide: { w: 21, h: 7, rMax: 3, turns: 1, cycleMs: 3200 },
+  tight: { w: 13, h: 5, r: 1.3, cycleMs: 2400 },
+  wide: { w: 21, h: 7, r: 2.4, cycleMs: 3000 },
 } as const
 
 /**
- * One cycle: the core forms; two satellites emerge and revolve in opposite
- * directions while their radius eases out; they meet on opposite sides; their
- * trails dissolve into points; the points spiral back in and the core re-forms.
- * `ms` is the time since the consultation was reported; null draws it still.
+ * Dual-Orbit Resonance. Two satellites on their own tilted orbits turn in
+ * opposite directions, each trailing a short comet tail. Their radii breathe
+ * out, then each breaks into points that spread along its path, and the
+ * points draw back together into the satellite. The angle never jumps, so the
+ * end of one cycle is the start of the next. `ms` is the time since a
+ * consultation was reported; null draws the resting form.
  */
 export function dualOrbit(variant: DualVariant, ms: number | null): Sprite {
   const v = DUAL[variant]
   const g = new Grid(v.w, v.h)
   if (ms === null) {
     // At rest: the faint orbit path, the core, two satellites parked opposite.
-    for (let k = 0; k < 16; k++) g.polar(v.rMax, (k * TAU) / 16, '·', 'faint')
-    g.polar(v.rMax, Math.PI, '∘', 'trail')
-    g.polar(v.rMax, 0, '∘', 'trail')
+    for (let k = 0; k < 16; k++) g.polar(v.r, (k * TAU) / 16, '·', 'faint')
+    g.polar(v.r, Math.PI, '∘', 'trail')
+    g.polar(v.r, 0, '∘', 'trail')
     g.put(g.cx, g.cy, '◇', 'core')
     return g.sprite()
   }
   const c = cyc(ms, v.cycleMs)
-  // Angle of satellite A at cycle point x; B mirrors it (opposite direction, half a turn apart).
-  const angle = (x: number) => -Math.PI / 2 + TAU * v.turns * ease(x)
-  const radius = (x: number) =>
-    x < 0.12 ? 0 : x < 0.25 ? v.rMax * 0.35 * ease((x - 0.12) / 0.13) : x < 0.7 ? v.rMax * (0.35 + 0.65 * ease((x - 0.25) / 0.45)) : v.rMax
-  const pos = (x: number, which: 0 | 1) => {
-    const a = angle(x)
-    return which === 0 ? a : Math.PI - a
+  // Whole turns per cycle keep the loop seamless: A turns once, B turns twice the other way.
+  const angA = TAU * c - Math.PI / 2
+  const angB = -2 * TAU * c + Math.PI / 2
+  // Radius: grows from the core over the first fifth, breathes, holds while dispersed.
+  const grow = ease(Math.min(1, c / 0.2))
+  const breathe = 1 + 0.12 * Math.sin(TAU * 2 * c)
+  // Dispersal: 0.55-0.75 spread out, 0.75-0.95 gather back, then whole again.
+  const spread = c < 0.55 ? 0 : c < 0.75 ? ease((c - 0.55) / 0.2) : c < 0.95 ? 1 - ease((c - 0.75) / 0.2) : 0
+  g.put(g.cx, g.cy, spread > 0.5 ? '◈' : grow < 0.4 ? '∘' : '●', 'core')
+  const sat = (angle: number, dir: 1 | -1, rScale: number) => {
+    const r = v.r * rScale * grow * breathe
+    // Tilt B's orbit by squashing it: a second plane, not a mirror of A.
+    const at = (a: number) => [r * Math.cos(a), r * Math.sin(a) * (rScale < 1 ? 0.6 : 1)] as const
+    const place = (a: number, ch: string, tone: Tone) => {
+      const [x, y] = at(a)
+      g.put(g.cx + 2 * x, g.cy + y, ch, tone)
+    }
+    if (spread > 0.02) {
+      // Points along the path, spreading with `spread`, fading as they go.
+      for (const k of [-2, -1, 1, 2]) place(angle + k * 0.45 * spread, Math.abs(k) === 1 ? '•' : '·', Math.abs(k) === 1 ? 'trail' : 'faint')
+      place(angle, spread > 0.6 ? '∙' : '●', spread > 0.6 ? 'trail' : 'sat')
+      return
+    }
+    place(angle - dir * 0.5, '·', 'faint')
+    place(angle - dir * 0.25, '∙', 'trail')
+    place(angle, '●', 'sat')
   }
-  if (c < 0.12) {
-    g.put(g.cx, g.cy, c < 0.04 ? '·' : c < 0.08 ? '∘' : '●', 'core')
+  sat(angA, 1, 1)
+  sat(angB, -1, 0.72)
+  return g.sprite()
+}
+
+// ---- NEXUS mark: the logo beside the wordmark --------------------------------
+export const LOGO = { w: 11, h: 3, cycleMs: 2600 }
+const ROLE_TONES: Tone[] = ['r1', 'r2', 'r3', 'r4']
+
+/**
+ * The NEXUS mark. Still: the hub and its four role-coloured nodes on the
+ * diagonals. Moving (while a turn runs): the nodes revolve, breathe out,
+ * scatter into points and gather back, one seamless cycle every 2.6 s.
+ */
+export function nexusLogo(ms: number | null): Sprite {
+  const g = new Grid(LOGO.w, LOGO.h)
+  g.put(g.cx, g.cy, '◉', 'core')
+  if (ms === null) {
+    ROLE_TONES.forEach((t, k) => g.polar(1.15, Math.PI / 4 + (k * TAU) / 4 + Math.PI, '•', t))
     return g.sprite()
   }
-  if (c < 0.7) {
-    const a = angle(c)
-    const isOpposed = Math.abs(Math.cos(a)) > 0.97
-    g.put(g.cx, g.cy, isOpposed ? '◉' : '●', 'core')
-    for (const which of [0, 1] as const) {
-      for (const [lag, tone, ch] of [[0.09, 'faint', '·'], [0.045, 'trail', '∙']] as const) {
-        const x = Math.max(0.12, c - lag)
-        g.polar(radius(x), pos(x, which), ch, tone)
-      }
-      g.polar(radius(c), pos(c, which), '●', 'sat')
+  const c = cyc(ms, LOGO.cycleMs)
+  const a0 = TAU * c + (5 * Math.PI) / 4
+  const scatter = c < 0.6 ? 0 : c < 0.8 ? ease((c - 0.6) / 0.2) : 1 - ease((c - 0.8) / 0.2)
+  const r = 1.0 + 0.25 * Math.sin(TAU * c) ** 2 + 0.55 * scatter
+  ROLE_TONES.forEach((t, k) => {
+    const a = a0 + (k * TAU) / 4
+    if (scatter > 0.3) {
+      g.polar(r, a - 0.35 * scatter, '·', t)
+      g.polar(r, a + 0.35 * scatter, '·', t)
+    } else {
+      g.polar(r * 0.9, a - 0.45, '·', 'faint')
+      g.polar(r, a, '•', t)
     }
-    return g.sprite()
-  }
-  g.put(g.cx, g.cy, c < 0.85 ? '∘' : '●', 'core')
-  if (c < 0.85) {
-    // The trails break into points that drift a little and fade.
-    const k = (c - 0.7) / 0.15
-    for (const which of [0, 1] as const) {
-      for (const lag of [0, 0.05, 0.1, 0.15]) {
-        const a = pos(0.7 - lag * (1 - k), which)
-        g.polar(v.rMax * (1 + 0.15 * k), a, k < 0.5 ? '∙' : '·', k < 0.5 ? 'trail' : 'faint')
-      }
-    }
-    return g.sprite()
-  }
-  // The points curve inward, still turning, and become the core again.
-  const k = ease((c - 0.85) / 0.15)
-  for (const which of [0, 1] as const) {
-    for (const lag of [0, 0.25, 0.5]) {
-      const a = pos(0.7, which) + (which === 0 ? 1 : -1) * Math.PI * (k + lag * 0.3)
-      g.polar(v.rMax * (1 - k) * (1 - lag * 0.3), a, '·', lag === 0 ? 'trail' : 'faint')
-    }
-  }
+  })
   return g.sprite()
 }
 
