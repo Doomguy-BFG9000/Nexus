@@ -86,7 +86,12 @@ Optional assistance with read-only next steps.
 
 ## Get started
 
-`/nexus` — dashboard · `/nexus-mode` — model modes · `/nexus-help` — commands · `/nexus-about` — walkthrough
+| Command | What it opens |
+| :--- | :--- |
+| **`/nexus`** | Live dashboard |
+| **`/nexus-mode`** | Model selection |
+| **`/nexus-help`** | Commands & shortcuts |
+| **`/nexus-about`** | Quick introduction |
 
 ## More information
 
