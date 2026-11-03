@@ -37,6 +37,7 @@ function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | 
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }) as any)
   on('prompt.compose', () => ({ sections: [] }) as any)
+  on('prompt.submit', (_, e: any) => ({ text: e.text, context: e.context ?? [] }) as any)
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 41_000, window: 200_000, percent: 21 }, rateLimits: [] } as any }))
   on('agent.register', (_, e) => {
     w.registered.agents.push(e)
@@ -70,6 +71,7 @@ function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | 
     if (e.tool !== 'Agent') return { result: { ok: true } } as any
     const id = [...w.spawned].reverse().find(s => s.type === e.subagent_type)?.id
     if (!id) return { deny: 'no agent' } as any
+    if ((w as any).async) return { result: { status: 'async_launched', agentId: id, description: e.description, prompt: e.prompt, outputFile: `/tmp/${id}.output` } } as any
     return { result: { status: 'completed', agentId: id, content: [{ type: 'text', text: w.answers[id] ?? '' }] } } as any
   })
   on('turn.step', async function* (_, e) {
@@ -428,4 +430,65 @@ test('reduced motion: the council panel draws still', async ($, on) => {
   const all = await panel($, 120)
   expect(all).toContain('SECURITY')
   expect(all).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)
+})
+
+// ---- background reviewers (an interactive session can force the background) ----
+
+const notification = ($: any, id: string, st = 'completed', result = "This agent's report was delivered to you as a message.") =>
+  $.prompt.submit({ text: `<task-notification>\n<task-id>${id}</task-id>\n<status>${st}</status>\n<result>${result}</result>\n</task-notification>`, origin: { kind: 'task-notification' }, isMeta: true } as any) as Promise<any>
+const ctx = async (p: Promise<any>) => ((await p).context as string[]).join('\n')
+const ended = ($: any, id: string, answer: string, aborted = false) =>
+  $.turn.complete({ turnId: `T-${id}`, agentId: id, answer, durationMs: 1000, isAborted: aborted, reason: aborted ? 'aborted' : 'answer' })
+
+/** On, three reviewers launched; the engine runs each in the background. */
+async function launchBackground($: any, on: any) {
+  const w = engine(on)
+  ;(w as any).async = true
+  await start($)
+  await run($, 'council on')
+  await councilCall($, { summary: 'two changes', selection: 'all' })
+  const ids: Record<string, string> = {}
+  const notes: string[] = []
+  for (const role of ['security', 'performance', 'architecture']) {
+    ids[role] = (await spawn($, role, `tu-${role}`)).agentId
+    notes.push((await agentResult($, role, `tu-${role}`)).note)
+  }
+  return { w, ids, notes }
+}
+
+test('background: an async launch is not read as an answer; each completion notification carries the checked result, the last one the merged verdict', async ($, on) => {
+  const { w, ids, notes } = await launchBackground($, on)
+  for (const n of notes) expect(n).toMatch(/is running in the background for checkpoint #\d+.*Do not message, resume or relaunch it/)
+  for (const n of notes) expect(n).not.toMatch(/INCOMPLETE|no readable findings/)
+  expect(await status($)).toMatch(/SECURITY\s+running/)
+  // Auto mode: the report comes through the engine's hand-back tool, which a reviewer may use; Bash is still refused.
+  expect(((await $.tool.call({ tool: 'SubagentHandback', agentId: ids.security, message: ANSWER() } as any)) as any).deny).toBe(undefined)
+  expect(JSON.stringify(await $.tool.call({ tool: 'Bash', agentId: ids.security, command: 'cat .env' } as any))).toMatch(/not available to council reviewers/)
+  // The engine's order: the notification first, the reviewer's turn.complete after it.
+  expect(await ctx(notification($, ids.security!))).toMatch(/checkpoint #\d+: SECURITY done\. Waiting for architecture, performance/)
+  await ended($, ids.security!, 'Report handed back.')
+  expect(await ctx(notification($, 'not-a-reviewer'))).toBe('') // nothing pending: no council context
+  // turn.complete first also works: the note rides on the next prompt.
+  await ended($, ids.performance!, ANSWER())
+  expect(await ctx(notification($, ids.performance!))).toMatch(/PERFORMANCE done/)
+  // Stopped from the task list: INCOMPLETE, and its notification carries the merged verdict.
+  const last = await ctx(notification($, ids.architecture!, 'killed', 'stopped'))
+  expect(last).toMatch(/NEXUS Council · snapshot [0-9a-f]+ · on/)
+  expect(last).toMatch(/ARCHITECTURE: INCOMPLETE: interrupted before it answered/)
+  expect(last).toMatch(/MEDIUM · security\+performance · src\/db\.ts:2/) // the same finding from both, merged once
+  await ended($, ids.architecture!, '', true)
+  expect(await status($)).toMatch(/last checkpoint #\d+: partial/)
+  // The checkpoint closed: a new diff can be reviewed.
+  w.diff = DIFF + '+// another change\n'
+  expect(await councilCall($, { summary: 'next', selection: 'all' })).toMatch(/authorized/)
+})
+
+test('background: every reviewer stopped before it answered: INCOMPLETE, not marked reviewed, the next review is allowed', async ($, on) => {
+  const { ids } = await launchBackground($, on)
+  for (const id of Object.values(ids)) await ended($, id, '', true)
+  const note = await ctx(notification($, 'x'))
+  expect(note).toMatch(/SECURITY: INCOMPLETE: interrupted before it answered/)
+  expect(note).not.toMatch(/STALE/) // nothing answered: the tree is not re-hashed, and nothing is called stale
+  expect(await status($)).toMatch(/last checkpoint #\d+: partial/)
+  expect(await councilCall($, { summary: 'again', selection: 'all' })).toMatch(/authorized/)
 })

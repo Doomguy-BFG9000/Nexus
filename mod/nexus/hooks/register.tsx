@@ -52,6 +52,7 @@ import {
   mayCall,
   parseFindings,
   parseSelection,
+  REPORT_TOOL,
   reviewerSystemPrompt,
   reviewerTask,
   reviewersFor,
@@ -1194,6 +1195,12 @@ type ReviewerEnd = { reason: 'answer' | 'aborted' | 'refusal' | 'error'; answer:
 const reviewerEnds = new Map<string, ReviewerEnd>()
 /** agentId → role, set by the agent.spawn hook before the reviewer's first tool call (kept for late events). */
 const reviewerRoles = new Map<string, CouncilRole>()
+/** Reviewers the engine ran in the background: their result comes with their completion notification (or turn.complete), not the Agent call. */
+const backgrounded = new Set<string>()
+/** A background reviewer's report handed back through the engine's hand-back tool (auto mode), by agent id. */
+const handbacks = new Map<string, string>()
+/** Checked results of background reviewers, attached to the lead's next prompt (their completion notification). */
+const pendingNotes: string[] = []
 let checkpointCount = 0
 
 const GIT_OUT_CHARS = 40_000
@@ -1265,7 +1272,7 @@ async function councilReview($: EngineInterface, input: Record<string, unknown>)
   const activation = p.council.activation
   if (!councilReady) return `NEXUS Council could not start in this session (${councilError ?? 'its agents were not registered'}). Nothing was launched.`
   if (activation === 'off') return 'NEXUS Council is off (/nexus council adaptive|on to enable). Nothing was launched; continue with the advisor as usual.'
-  if (open && open.launched.size > open.results.size) return 'A council review is already running; its verdict comes back with the reviewers’ Agent results. Not launched again.'
+  if (open && open.launched.size > open.results.size) return 'A council review is already running; its checked findings come back with the reviewers’ results or completion notifications. Not launched again.'
 
   const at = await $.clock.now()
   const summary = typeof input.summary === 'string' ? input.summary.trim().slice(0, 400) : ''
@@ -1334,6 +1341,11 @@ async function councilSpawn($: EngineInterface, e: { subagentType?: string; prom
   open.launched.add(role)
   const task = reviewerTask(role, open.snap, open.summary, open.cp.activation === 'on' ? 'full council' : open.cp.rationale)
   const spawned = await next({ ...e, prompt: task, description: `${role} review`, background: false, ...('run_in_background' in e ? { run_in_background: false } : {}) })
+  // Recorded before any other await: a background launch's Agent result can arrive right behind the spawn.
+  if (spawned?.agentId) {
+    reviewerRoles.set(spawned.agentId, role)
+    if (typeof e.tool_use_id === 'string' && e.tool_use_id) launchedBy.set(e.tool_use_id, role)
+  }
   const startedAt = await $.clock.now()
   if (!spawned?.agentId) {
     open.results.set(role, null)
@@ -1343,18 +1355,17 @@ async function councilSpawn($: EngineInterface, e: { subagentType?: string; prom
     return spawned
   }
   const id: string = spawned.agentId
-  reviewerRoles.set(id, role)
-  if (typeof e.tool_use_id === 'string' && e.tool_use_id) launchedBy.set(e.tool_use_id, role)
   await update($, council, c => ({ ...c, launches: c.launches + 1, granted: { ...c.granted, [id]: [] } }))
   await patchReviewer($, role, r => ({ ...r, agentId: id, status: 'running', startedAt, activity: 'reviewing' }))
   await addFx($, 'council-out', role)
-  await addLog($, { who: 'council', kind: 'start', text: `${ROLE_LABEL[role].toLowerCase()} opus started`, detail: `checkpoint #${open.cp.id}` })
+  await addLog($, { who: 'council', kind: 'start', text: `${ROLE_LABEL[role].toLowerCase()} ${councilModel} started`, detail: `checkpoint #${open.cp.id}` })
   return spawned
 }
 
 /** A council reviewer's Agent result, back in the lead's hook: how it ended, its findings, and the verdict once all are in. */
 async function councilResult($: EngineInterface, role: CouncilRole, ran: Record<string, unknown>, ranId: string | null): Promise<string> {
   const now = await $.clock.now()
+  if (open?.results.has(role)) return `NEXUS Council: ${role}'s result for checkpoint #${open.cp.id} is already recorded.`
   const r = (await read($, council)).reviewers[role]
   const id = ranId ?? r.agentId
   const end = id ? reviewerEnds.get(id) : undefined
@@ -1392,13 +1403,15 @@ async function councilResult($: EngineInterface, role: CouncilRole, ran: Record<
 async function finalizeCheckpoint($: EngineInterface): Promise<string> {
   const o = open!
   open = null
-  const after = await reviewSnapshot($)
-  const isStale = 'error' in after || after.hash !== o.snap.hash
+  const ok = o.roles.filter(r => o.results.get(r)).length
+  // Re-hashed only when there are findings to judge: a failed re-check is said as such, never called stale.
+  const after = ok > 0 ? await reviewSnapshot($) : null
+  const isStale = after !== null && !('error' in after) && after.hash !== o.snap.hash
+  const recheck = after && 'error' in after ? `could not re-check the working tree after the review (${after.error}); verify the findings against the current code` : null
   const raw = o.roles.flatMap(r => o.results.get(r) ?? []).map(f => ({ ...f, file: relPath(f.file, cwd) }))
   const merged = dedupe(checkRefs(raw, await lineCounts($, raw.map(f => f.file).filter((f): f is string => !!f))))
   if (isStale) for (const r of o.roles) await patchReviewer($, r, x => (x.status === 'done' ? { ...x, status: 'stale', reason: 'the working tree changed during the review' } : x))
-  const ok = o.roles.filter(r => o.results.get(r)).length
-  const done: Checkpoint = { ...o.cp, status: ok === o.roles.length ? 'done' : 'partial', findings: merged, isStale, endedAt: await $.clock.now() }
+  const done: Checkpoint = { ...o.cp, status: ok === o.roles.length ? 'done' : 'partial', reason: recheck ?? o.cp.reason, findings: merged, isStale, endedAt: await $.clock.now() }
   const reviewers = (await read($, council)).reviewers
   // Marked reviewed only when some reviewer answered: a checkpoint where every run failed can be tried again.
   await update($, council, x => ({ ...x, checkpoint: done, reviewed: ok > 0 ? [...x.reviewed, o.snap.hash].slice(-20) : x.reviewed }))
@@ -1421,6 +1434,27 @@ async function closeCheckpoint($: EngineInterface, why: string) {
   const closed: Checkpoint = { ...o.cp, status: 'partial', reason: `authorized, not launched: ${why}`, endedAt: await $.clock.now() }
   await update($, council, x => ({ ...x, checkpoint: closed }))
   await addLog($, { who: 'council', kind: 'info', text: 'council not launched', detail: why })
+}
+
+/** A background reviewer's run is over: check and record its result once, from its hand-back or final answer. */
+async function settleBackground($: EngineInterface, id: string, role: CouncilRole, end: ReviewerEnd): Promise<string> {
+  backgrounded.delete(id)
+  const answer = handbacks.get(id) || end.answer
+  handbacks.delete(id)
+  reviewerEnds.set(id, { ...end, answer })
+  const isOurs = open !== null && (await read($, council)).reviewers[role].agentId === id
+  return isOurs ? councilResult($, role, {}, id) : orphanEnd($, role, id)
+}
+
+/** A reviewer that ended with no open checkpoint to merge into (NEXUS reloaded mid-review): shown INCOMPLETE, never done. */
+async function orphanEnd($: EngineInterface, role: CouncilRole, agentId: string): Promise<string> {
+  const r = (await read($, council)).reviewers[role]
+  if (r.agentId === agentId && (r.status === 'running' || r.status === 'queued')) {
+    const now = await $.clock.now()
+    await patchReviewer($, role, x => ({ ...x, status: 'incomplete', endedAt: now, reason: 'NEXUS was reloaded during the review, so its result was not merged', activity: null }))
+    await addLog($, { who: 'council', kind: 'error', text: `${ROLE_LABEL[role].toLowerCase()} incomplete`, detail: 'not merged: NEXUS reloaded mid-review' })
+  }
+  return `NEXUS Council: the ${role} reviewer ended after NEXUS was reloaded, so its findings were not checked or merged (INCOMPLETE). Run the review again if you need it.`
 }
 
 /** A reviewer's role by agent id: the in-memory map, else the ids kept in $.state (which a reload keeps). */
@@ -1606,13 +1640,23 @@ export const register: Register = (on, options) => {
       await ledgerDeny($, id, name, verdict.why)
       return { deny: verdict.why }
     }
-    await noteActivity($, id, label)
+    if (name === REPORT_TOOL) {
+      const message = (e as unknown as { message?: unknown }).message
+      if (typeof message === 'string' && message.trim()) handbacks.set(id, message)
+    }
+    await noteActivity($, id, name === REPORT_TOOL ? 'handing back its report' : label)
     return next(e)
   }).catch(($, e, next) => (e.agentId && reviewerRoles.has(e.agentId) ? { deny: 'NEXUS could not check this reviewer call, so it is refused' } : next(e))) // fail closed for reviewers
 
   // ---- session --------------------------------------------------------------
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
+    // A reload mid-review loses the open checkpoint: say so, rather than show it running forever.
+    const cn = await read($, council)
+    if (!open && cn.checkpoint?.status === 'running') {
+      const now = await $.clock.now()
+      await update($, council, x => ({ ...x, checkpoint: x.checkpoint && { ...x.checkpoint, status: 'partial' as const, reason: 'NEXUS was reloaded during this review, so it could not be merged', endedAt: now } }))
+    }
     home = (await $.env.get('HOME')) ?? ''
     sessionId = await $.session.id()
     jevKey = await loadJevKey($)
@@ -1689,6 +1733,18 @@ export const register: Register = (on, options) => {
 
   // ---- prompts: offer a stronger mode, never switch without a yes ----------
   on('prompt.submit', async ($, e, next) => {
+    // A background reviewer's completion notification: settle it now, so its checked result rides on it.
+    const taskId = e.origin.kind === 'task-notification' ? /<task-id>([^<\s]+)<\/task-id>/.exec(e.text)?.[1] : undefined
+    if (taskId && backgrounded.has(taskId)) {
+      const role = await roleOf($, taskId)
+      const st = /<status>(\w+)<\/status>/.exec(e.text)?.[1] ?? ''
+      const result = /<result>([\s\S]*?)<\/result>/.exec(e.text)?.[1] ?? ''
+      if (role) pendingNotes.push(await settleBackground($, taskId, role, { reason: st === 'completed' ? 'answer' : st === 'failed' ? 'error' : 'aborted', answer: result }))
+    }
+    if (pendingNotes.length && !(e as { agentId?: string }).agentId) {
+      const notes = pendingNotes.splice(0)
+      return next({ ...e, context: [...(e.context ?? []), ...notes] })
+    }
     const isTyped = !e.command && !e.isMeta && !e.turnId && e.origin.kind === 'composer'
     if (isTyped && (await read($, prefs)).escalation !== 'off') await escalate($, e.text)
     return next(e)
@@ -1710,8 +1766,17 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId && reviewerRoles.has(e.agentId)) {
-      reviewerEnds.set(e.agentId, { reason: e.isAborted ? 'aborted' : e.reason, answer: e.answer })
+    const reviewer = e.agentId ? await roleOf($, e.agentId) : undefined
+    if (e.agentId && reviewer) {
+      const id = e.agentId
+      const end: ReviewerEnd = { reason: e.isAborted ? 'aborted' : e.reason, answer: handbacks.get(id) || e.answer }
+      // Usually its completion notification came first and settled it; else it is settled here.
+      if (backgrounded.has(id)) pendingNotes.push(await settleBackground($, id, reviewer, end))
+      else if (!reviewerEnds.has(id)) {
+        reviewerEnds.set(id, end)
+        handbacks.delete(id)
+        if (!open || !open.launched.has(reviewer)) await orphanEnd($, reviewer, id)
+      }
       return next(e)
     }
     if (!e.agentId) {
@@ -1939,11 +2004,18 @@ export const register: Register = (on, options) => {
       const ran = await next({ ...e, run_in_background: false } as typeof e)
       // Which reviewer this call ran: the agentId its result names, else the launch this call made.
       const res = 'result' in ran && ran.result && typeof ran.result === 'object' ? (ran.result as { agentId?: unknown }) : null
-      const ranId = typeof res?.agentId === 'string' && reviewerRoles.has(res.agentId) ? res.agentId : null
       const byCall = launchedBy.get(e.tool_use_id)
+      const ranId = typeof res?.agentId === 'string' && (reviewerRoles.has(res.agentId) || byCall) ? res.agentId : null
+      if (ranId && byCall && !reviewerRoles.has(ranId)) reviewerRoles.set(ranId, byCall)
       // Refused at the gate: this call launched nobody, so no reviewer's result is touched.
       if (!ranId && !byCall) return ran
       launchedBy.delete(e.tool_use_id)
+      // The engine ran it in the background (an interactive session can force that): the result comes later.
+      if (ranId && (res as { status?: unknown }).status === 'async_launched') {
+        backgrounded.add(ranId)
+        const later = `NEXUS Council: ${councilRole} is running in the background${open ? ` for checkpoint #${open.cp.id}` : ''}. NEXUS attaches its checked findings, and the merged verdict after the last reviewer, to its completion notification. Do not message, resume or relaunch it.`
+        return { ...ran, context: [...(('context' in ran && ran.context) || []), later] } as typeof ran
+      }
       const note = await councilResult($, ranId ? reviewerRoles.get(ranId)! : councilRole, ran as unknown as Record<string, unknown>, ranId)
       if ('deny' in ran && ran.deny) return { deny: `${ran.deny}\n${note}` }
       return { ...ran, context: [...(('context' in ran && ran.context) || []), note] } as typeof ran

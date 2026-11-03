@@ -31,6 +31,8 @@ export const GIT_TOOL = 'mcp__nexus__git_read'
 export const BASE_TOOLS = ['Read', 'Grep', 'Glob'] as const
 /** Listed in the definition so a grant can take effect, but refused until the router grants it. */
 export const GRANTABLE_TOOLS = [GIT_TOOL] as const
+/** How a background subagent hands its report to the lead (auto mode): a return channel, not a capability. */
+export const REPORT_TOOL = 'SubagentHandback'
 /** Withheld outright: never callable by a reviewer, whatever it asks. */
 export const WITHHELD_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'BashOutput', 'KillShell', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'TodoWrite'] as const
 
@@ -54,7 +56,7 @@ export function reviewerSystemPrompt(role: CouncilRole): string {
     'You never modify anything. You have Read, Grep and Glob. If you need git history, call mcp__nexus__request_capability with capability "git_read" and a reason; once granted, mcp__nexus__git_read runs fixed read-only git commands. Requests for anything else are refused.',
     'Do not open secrets (.env files, keys, certificates, credentials). Do not spawn agents or ask for another review.',
     'Every finding must point at code you actually read. Quote the evidence. Say how the lead can verify it. Prefer few, real findings over many speculative ones; an empty list is a valid answer.',
-    'End your answer with exactly one fenced ```json block holding an array of findings, each:',
+    'End your answer with exactly one fenced ```json block holding an array of findings, each (if you deliver your report through a hand-back tool, the report you hand back must end with that block):',
     '{"severity": "critical|high|medium|low|info", "file": "path relative to the repository root", "line": 123, "title": "one line", "evidence": "what the code shows", "action": "recommended fix or how to verify", "confidence": 0.0-1.0}',
   ].join('\n')
 }
@@ -245,6 +247,7 @@ export function verdictText(cp: Checkpoint, reviewers: Reviewer[]): string {
     lines.push(`- ${ROLE_LABEL[r.role]}: ${state}`)
   }
   if (cp.isStale) lines.push('STALE: the working tree changed while the council reviewed; re-check every finding against the current code.')
+  else if (cp.reason && cp.status !== 'running') lines.push(cp.reason)
   if (cp.isTruncated) lines.push('The diff was truncated for the reviewers; they were told to read the files for the rest.')
   if (!cp.findings.length) {
     lines.push('No findings.')
@@ -291,7 +294,7 @@ export function mayCall(tool: string, granted: readonly string[], input: Record<
     if (path && isSecretPath(path)) return { ok: false, why: `${path} looks like a secret; reviewers do not read secrets` }
     return { ok: true }
   }
-  if (tool === REQUEST_TOOL) return { ok: true }
+  if (tool === REQUEST_TOOL || tool === REPORT_TOOL) return { ok: true }
   if ((GRANTABLE_TOOLS as readonly string[]).includes(tool)) {
     return granted.includes(tool) ? { ok: true } : { ok: false, why: `${tool} needs a grant: call ${REQUEST_TOOL} first` }
   }

@@ -9,6 +9,8 @@
 - **Reviewer tool routing:** reviewers start with Read, Grep and Glob. Writes, shell, network and agents are withheld by the agent definition and refused again by a hook that fails closed, which also blocks secret paths. `git_read` (fixed argv, no shell) is granted on request by a deterministic router, and every request is logged (`/nexus council ledger`).
 - **Dashboard:** the left Opus panel splits into the three reviewers, each with an event-driven link to the lead. Compact and list layouts show a one-line strip.
 - **Commands:** `/nexus council [adaptive|on|off|status|findings|ledger]`.
+- **Background reviewers:** when Claude Code runs reviewers in the background (interactive sessions), their hand-back reports are allowed and read. Each checked result, and the merged verdict, arrive with their completion notifications. A reviewer stopped from the task list, or a plugin reload mid-review, is reported INCOMPLETE; the checkpoint never stays running.
+- **Benchmark** against the single advisor, in the Council guide: on three small tasks, Off found 14 of 15 planted issues, Adaptive and On 15, with no false positives, at about +35% and +97% API-priced cost.
 - **Preferences:** stored preferences move to v3 and keep every earlier value. Saved pane widths from v2 are kept (0.6.0 also read v2 only).
 - **Credits:** Karpathy's LLM Council and Dr. Tian Tian's routing ideas are acknowledged (no code reused).
 

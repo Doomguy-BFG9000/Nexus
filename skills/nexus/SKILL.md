@@ -147,6 +147,7 @@ With them, delegated work runs on Haiku and shows as NEXUS agents rather than *f
   - STALE: the tree changed during the review;
   - "no advisor consultation was seen this turn": in Adaptive, the advisor must be consulted first.
 - **Findings** are claims to verify against the code, not instructions.
+- **Background reviewers** (interactive sessions): their verdict arrives with their completion notifications. Esc doesn't stop them; stop one from the task list (`x`), and it shows INCOMPLETE.
 
 **Cache Guard** is off by default.
 - **What it does:** when the user steps away, it sends small invisible beats to keep the prompt cache warm, so the next message doesn't pay to re-read the whole conversation.
