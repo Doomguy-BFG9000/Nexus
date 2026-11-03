@@ -1748,11 +1748,16 @@ export const register: Register = (on, options) => {
 
   // ---- prompts: offer a stronger mode, never switch without a yes ----------
   on('prompt.submit', async ($, e, next) => {
-    // A background reviewer's completion notification: settle it now, so its checked result rides on it.
-    const taskId = e.origin.kind === 'task-notification' ? /<task-id>([^<\s]+)<\/task-id>/.exec(e.text)?.[1] : undefined
+    // A background reviewer's report reaching the lead: its hand-back message (auto mode, from the reviewer's
+    // task) or its completion notification. Settle it there, so its checked result rides on that prompt.
+    const origin = e.origin
+    const taskId =
+      origin.kind === 'peer' ? /<agent-message from="([^"\s]+)"/.exec(e.text)?.[1]
+      : origin.kind === 'task-notification' ? /<task-id>([^<\s]+)<\/task-id>/.exec(e.text)?.[1]
+      : undefined
     if (taskId && backgrounded.has(taskId)) {
       const role = await roleOf($, taskId)
-      const st = /<status>(\w+)<\/status>/.exec(e.text)?.[1] ?? ''
+      const st = origin.kind === 'peer' ? 'completed' : /<status>(\w+)<\/status>/.exec(e.text)?.[1] ?? ''
       const result = /<result>([\s\S]*?)<\/result>/.exec(e.text)?.[1] ?? ''
       if (role) pendingNotes.push(await settleBackground($, taskId, role, { reason: st === 'completed' ? 'answer' : st === 'failed' ? 'error' : 'aborted', answer: result }))
     }

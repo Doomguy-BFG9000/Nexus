@@ -490,8 +490,9 @@ test('background: an async launch is not read as an answer; each completion noti
   // Auto mode: the report comes through the engine's hand-back tool, which a reviewer may use; Bash is still refused.
   expect(((await $.tool.call({ tool: 'SubagentHandback', agentId: ids.security, message: ANSWER() } as any)) as any).deny).toBe(undefined)
   expect(JSON.stringify(await $.tool.call({ tool: 'Bash', agentId: ids.security, command: 'cat .env' } as any))).toMatch(/not available to council reviewers/)
-  // The engine's order: the notification first, the reviewer's turn.complete after it.
-  expect(await ctx(notification($, ids.security!))).toMatch(/checkpoint #\d+: SECURITY done\. Waiting for architecture, performance/)
+  // Auto mode's order: the hand-back message reaches the lead (from the reviewer's task) before its turn.complete.
+  const handback = $.prompt.submit({ text: `Another Claude session sent a message: <agent-message from="${ids.security}"> [Subagent hand-back] …</agent-message>`, origin: { kind: 'peer' }, isMeta: true } as any)
+  expect(await ctx(handback)).toMatch(/checkpoint #\d+: SECURITY done\. Waiting for architecture, performance/)
   await ended($, ids.security!, 'Report handed back.')
   expect(await ctx(notification($, 'not-a-reviewer'))).toBe('') // nothing pending: no council context
   // turn.complete first also works: the note rides on the next prompt.
