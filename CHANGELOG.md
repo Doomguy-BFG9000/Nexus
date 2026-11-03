@@ -1,6 +1,6 @@
 # Changelog (NEXUS)
 
-## 0.7.0 (unreleased): NEXUS Council and reviewer tool routing
+## 0.7.0 (2026-11-02): NEXUS Council and reviewer tool routing
 - **NEXUS Council:** read-only Opus Security, Architecture and Performance reviewers at a review checkpoint (`mcp__nexus__council_review`). The setting is `council.activation`, saved in the plugin store:
   - Adaptive (the default): the advisor picks at most one;
   - On: all three, concurrently, with a yellow token warning;
@@ -12,6 +12,7 @@
 - **Background reviewers:** when Claude Code runs reviewers in the background (interactive sessions), their hand-back reports are allowed and read. Each checked result, and the merged verdict, arrive with the reviewer's report (its hand-back message or completion notification). An advisor call in the same response as `council_review` is now seen. A reviewer stopped from the task list, or a plugin reload mid-review, is reported INCOMPLETE; the checkpoint never stays running.
 - **Benchmark** against the single advisor, in the Council guide: on three small tasks, Off found 14 of 15 planted issues, Adaptive and On 15, with no false positives, at about +35% and +97% API-priced cost.
 - **Preferences:** stored preferences move to v3 and keep every earlier value. Saved pane widths from v2 are kept (0.6.0 also read v2 only).
+- **Privacy:** NEXUS redacts its own verdict, dashboard and log. Reviewers' raw reports, delivered to the lead by Claude Code, aren't redacted, and secret blocking covers named paths only. See the Privacy section of the Council guide.
 - **Credits:** Karpathy's LLM Council and Dr. Tian Tian's routing ideas are acknowledged (no code reused).
 
 ## 0.6.0 (2026-11-02): NEXUS everywhere
