@@ -1668,6 +1668,8 @@ export const register: Register = (on, options) => {
     cwd = e.cwd
     // A reload mid-review loses the open checkpoint: say so, rather than show it running forever.
     const cn = await read($, council)
+    // Checkpoint numbers continue across a reload, so a new one never reuses an earlier number.
+    checkpointCount = Math.max(checkpointCount, cn.checkpoint?.id ?? 0)
     if (!open && cn.checkpoint?.status === 'running') {
       const now = await $.clock.now()
       await update($, council, x => ({ ...x, checkpoint: x.checkpoint && { ...x.checkpoint, status: 'partial' as const, reason: 'NEXUS was reloaded during this review, so it could not be merged', endedAt: now } }))
@@ -1798,7 +1800,8 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     if (!e.agentId) {
-      if (open) await closeCheckpoint($, 'the lead\u2019s turn ended before launching them')
+      // NEXUS can't see why: the lead didn't launch them, or Claude Code refused the launch (a permission or auto-mode decision).
+      if (open) await closeCheckpoint($, 'the lead\u2019s turn ended with none launched (not launched by the lead, or the launch was refused by Claude Code)')
       await update($, lead, l => ({ ...l, turnStartedAt: null, isWaiting: false }))
       await refreshUsage($)
       await guardActivityEnded($)

@@ -197,7 +197,7 @@ Findings that point at a secret-looking path have their evidence withheld. This 
 ## Limitations
 
 - **The advisor's pick is relayed, not read.** Plugins see *that* the advisor was consulted (its timing), not what it said; the transcript holds the advice encrypted. In Adaptive the lead passes on the advisor's `Council:` line. NEXUS checks a consultation happened that turn, but can't verify the wording.
-- **The lead launches the reviewers.** A plugin tool hook has a ~10 s budget and can't wait for agents, so NEXUS authorizes, gates and checks, while the lead's own Agent calls run the reviewers. If the lead doesn't launch them, the checkpoint shows "authorized, not launched".
+- **The lead launches the reviewers.** A plugin tool hook has a ~10 s budget and can't wait for agents, so NEXUS authorizes, gates and checks, while the lead's own Agent calls run the reviewers. If no reviewer is launched, the checkpoint shows "authorized, not launched". That covers a lead that didn't launch them, and a launch Claude Code refused: in auto mode its classifier decides, and in one live smoke test it refused a reviewer launch.
 - **Background reviewers:**
   - Esc doesn't stop them, as for any background agent in Claude Code. Stop one from the task list (`↓`, select it, `x`), or all agents with ctrl+x ctrl+k. A stopped reviewer is reported INCOMPLETE.
   - Their verdict reaches the lead with their reports, so the lead's turn may end before it arrives.
