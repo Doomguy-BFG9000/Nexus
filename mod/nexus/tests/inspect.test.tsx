@@ -4,7 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 const pane = (isFocused: boolean, bodyColumns = 90) =>
   ({ plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows: 46 }, view: {} } }) as const
 
-function engine(on: On) {
+function engine(on: On, defs: Record<string, string> = {}) {
   const clock = mock.clock(on, { now: 3_000_000 })
   mock.env(on, { HOME: '/home/test' })
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
@@ -14,6 +14,7 @@ function engine(on: On) {
   on('process.run', () => ({ value: { exitCode: 44, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.read', (_, e) => {
     if (e.path.endsWith('nexus-search.md')) return { value: '---\nname: nexus-search\nmaxTurns: 25\n---\nbody' }
+    for (const [name, text] of Object.entries(defs)) if (e.path.endsWith(`/${name}.md`)) return { value: text }
     throw new Error('none')
   })
   on('command.register', () => ({ value: { command: 'x' } }))
@@ -150,4 +151,23 @@ test('cards keep their footprint: long labels and tasks are cut with an ellipsis
   expect(all).toMatch(/Audit: corr[a-z]*…/)
   expect(all).not.toMatch(/Audit: correctness of the whole cache layer/)
   expect(all).toMatch(/● running 0s/)
+})
+
+test('the audit card follows its definition: the current audit runs in the checkout (no worktree marker, 30 turns); an old worktree definition still shows one', async ($, on) => {
+  // The shipped nexus-audit (2026-11) has no `isolation`: it checks the lead's own checkout.
+  engine(on, { 'nexus-audit': '---\nname: nexus-audit\nmodel: haiku\ntools: Read, Glob, Grep, Bash\nmaxTurns: 30\n---\nbody' })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await spawn($, 'nexus-audit', 'checks the change', 'tu1')
+  await step($, 'agent-1')
+  const now = await texts($)
+  expect(now).not.toMatch(/in a worktree/)
+  expect(now).toMatch(/checks the cha/)
+  expect((await run($, 'inspect 1')).text).toMatch(/\/30/)
+})
+
+test('an audit definition from before 2026-11 (isolation: worktree) is still drawn as running in a worktree', async ($, on) => {
+  engine(on, { 'nexus-audit': '---\nname: nexus-audit\nisolation: worktree\nmaxTurns: 40\n---\nbody' })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await spawn($, 'nexus-audit', 'checks the change', 'tu1')
+  expect(await texts($)).toMatch(/in a worktree/)
 })

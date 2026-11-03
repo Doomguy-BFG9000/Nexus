@@ -1,5 +1,21 @@
 # Changelog (NEXUS)
 
+## Unreleased: Haiku agents, benchmarked
+- **`nexus-audit` redesigned on benchmark evidence**, keeping its name:
+  - It now checks the lead's own checkout read-only (Read, Glob, Grep, Bash). It has no Write, no `acceptEdits` and no isolated worktree.
+  - The old design applied a pasted diff in a worktree. In one run it rebuilt the patch four times before `git apply` took it.
+  - Results for the shipped definition, forced-delegation runs, n=2:
+    - "Review the uncommitted change": 51 s vs 91 s, 42% fewer Haiku input tokens, the agent's own Haiku cost 54% lower, and the session cost 22% lower.
+    - "Find why the type-check fails and confirm it": 1.0 vs 0.5. The old audit stepped out of its worktree and its `tsc` never ran.
+  - It runs checks in the foreground, takes commands from the task, README, package files or CI config, and stays inside the repository. In a live auto-mode smoke test, an earlier draft searched the whole disk for `tsc`.
+- **No new roles.** The proposed Explorer / Tracer / Auditor set was benchmarked against Search / Grep / Audit and against no Haiku agents, and wasn't adopted under the rule fixed before the runs:
+  - In 42 natural runs the Sonnet lead delegated 0 times, with equal correctness (1.000 in all three setups).
+  - Under forced delegation, Explorer tied Grep and Tracer was 4% cheaper than Grep.
+  - The lead never picked `nexus-search`; with the current set it chose `nexus-grep` for every lookup and trace.
+
+  See [docs/haiku-agents-benchmark.md](mod/nexus/docs/haiku-agents-benchmark.md).
+- Dashboard: no change. The audit card shows "in a worktree" only for an old definition that still declares `isolation: worktree`, and tests cover both.
+
 ## Unreleased: Council reliability, security and performance audit
 - **Security:** reviewers are confined to the session's directories (symlinks followed), and a Grep `glob` that could select a secret file is refused; before, `glob: ".env*"` and a symlink with an innocent name returned a gitignored `.env`'s contents. `git_read` refuses pathspec magic (`:(glob)…`) and a bare `show` leaves secret files out of the patch. More credential files count as secrets. Reviewer-supplied finding paths are no longer opened by NEXUS to count lines unless they pass the same check; findings outside the repository are marked `outside-repo` and their evidence withheld.
 - **Verdict integrity:** finding text is one bounded line, so a reviewer (steered by the code it read) cannot start a forged `CRITICAL · …` line in the verdict. Text is cut before redaction (redaction was quadratic: 80k characters took 3–5 s of the plugin's event loop).
