@@ -470,6 +470,8 @@ test('background: an async launch is not read as an answer; each completion noti
   expect(await ctx(notification($, 'not-a-reviewer'))).toBe('') // nothing pending: no council context
   // turn.complete first also works: the note rides on the next prompt.
   await ended($, ids.performance!, ANSWER())
+  // A slash command is not read by the model: the note waits for the next real prompt.
+  expect(await ctx($.prompt.submit({ text: '/nexus council status', command: 'nexus', origin: { kind: 'composer' } } as any))).toBe('')
   expect(await ctx(notification($, ids.performance!))).toMatch(/PERFORMANCE done/)
   // Stopped from the task list: INCOMPLETE, and its notification carries the merged verdict.
   const last = await ctx(notification($, ids.architecture!, 'killed', 'stopped'))

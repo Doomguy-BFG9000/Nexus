@@ -1741,13 +1741,11 @@ export const register: Register = (on, options) => {
       const result = /<result>([\s\S]*?)<\/result>/.exec(e.text)?.[1] ?? ''
       if (role) pendingNotes.push(await settleBackground($, taskId, role, { reason: st === 'completed' ? 'answer' : st === 'failed' ? 'error' : 'aborted', answer: result }))
     }
-    if (pendingNotes.length && !(e as { agentId?: string }).agentId) {
-      const notes = pendingNotes.splice(0)
-      return next({ ...e, context: [...(e.context ?? []), ...notes] })
-    }
+    // Notes ride on a prompt the model reads: never on a slash command.
+    const notes = pendingNotes.length && !e.command && !(e as { agentId?: string }).agentId ? pendingNotes.splice(0) : []
     const isTyped = !e.command && !e.isMeta && !e.turnId && e.origin.kind === 'composer'
     if (isTyped && (await read($, prefs)).escalation !== 'off') await escalate($, e.text)
-    return next(e)
+    return next(notes.length ? { ...e, context: [...(e.context ?? []), ...notes] } : e)
   }).catch(($, e, next) => next(e)) // a failed check never holds up the prompt
 
   // ---- turns: the lead's and every subagent's model requests -------------
