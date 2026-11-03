@@ -16,15 +16,30 @@ type World = {
   answers: Record<string, string>
   registered: { agents: any[]; tools: string[] }
   gitCalls: string[][]
+  gitCwds: unknown[]
+  fsReads: string[]
+  /** Untracked file contents as git hash-object would see them. */
+  untrackedBody: string
+  /** path → where a symlink lands (absolute). */
+  real: Record<string, string>
+  cwd: string
+  /** The repository's top level when the session sits in a subfolder of it. */
+  top: string | null
+  failSpawn: boolean
+  saved: Record<string, unknown>
+  sets: string[]
+  unreadable: boolean
 }
 let world: World
 
-function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | null = 'opus'): World {
+function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | null = 'opus', env: Record<string, string> = {}): World {
   const clock = mock.clock(on, { now: 5_000_000 })
-  const w: World = { t: 5_000_000, clock, diff: DIFF, spawned: [], answers: {}, registered: { agents: [], tools: [] }, gitCalls: [] }
+  const w: World = { t: 5_000_000, clock, diff: DIFF, spawned: [], answers: {}, registered: { agents: [], tools: [] }, gitCalls: [], gitCwds: [], fsReads: [], untrackedBody: 'v1', real: {}, cwd: '/repo', top: null, failSpawn: false, saved: { ...stored }, sets: [], unreadable: false }
   world = w
-  mock.env(on, { HOME: '/home/test' })
-  mock.store(on, stored)
+  mock.env(on, { HOME: '/home/test', ...env })
+  // The plugin store as a plain object, so a test can see exactly what was saved (and make it unreadable).
+  on('store.get', (_, e) => (w.unreadable ? ({ deny: 'disk busy' } as any) : ({ value: w.saved[String(e.key)] } as any)))
+  on('store.set', (_, e) => (w.sets.push(String(e.key)), (w.saved[String(e.key)] = e.value), { value: undefined }) as any)
   on('settings.read', () => ({ value: { advisorModel: advisor } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
@@ -52,22 +67,38 @@ function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | 
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (argv[0] !== 'git') return { value: { exitCode: 44, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     w.gitCalls.push(argv)
-    if (argv[1] === 'rev-parse') return ok('true\n')
+    w.gitCwds.push((e as any).init?.cwd)
+    if (argv[1] === 'rev-parse' && (w as any).notRepo) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[1] === 'rev-parse') return ok(argv.includes('--show-toplevel') ? `${w.top ?? w.cwd}\n` : 'true\n')
+    // The secret-only diff (pathspecs that select secret files) is its own call.
+    if (argv[1] === 'diff' && argv.some(a => a.startsWith(':(glob,icase)'))) return ok((w as any).secretDiff ?? '')
     if (argv[1] === 'diff') return ok(w.diff)
-    if (argv[1] === 'ls-files') return ok((w as any).noUntracked ? '' : '.env\nnotes/new.ts\n')
+    if (argv[1] === 'ls-files') return ok((w as any).noUntracked ? '' : '.env\0notes/new.ts\0')
+    if (argv[1] === 'hash-object' && (w as any).hashFail?.(++(w as any).hashCalls)) return { value: { exitCode: 124, stdout: '', stderr: 'timed out', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[1] === 'hash-object') return ok(argv.slice(argv.indexOf('--') + 1).map(f => `${w.untrackedBody}-${f}`).join('\n') + '\n')
     if (argv[1] === 'log') return ok('abc123 first commit\n')
     return ok('')
   })
-  on('fs.read', (_, e) => (String(e.path).endsWith('src/db.ts') ? ({ value: 'a\nb\nc\n' } as any) : ({ deny: 'missing' } as any)))
+  on('session.cwd', () => ({ value: w.cwd }) as any)
+  on('session.root', () => ({ value: '/home/me' }) as any) // where the session started: not the repository
+  on('fs.stat', (_, e) => {
+    const p = String(e.path)
+    const abs = p.startsWith('/') ? p : `${w.cwd}/${p}`
+    if ((w as any).statFail?.[abs]) return { deny: (w as any).statFail[abs] } as any
+    return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: abs in w.real, realPath: w.real[abs] ?? abs } } as any
+  })
+  on('fs.read', (_, e) => (w.fsReads.push(String(e.path)), String(e.path).endsWith('src/db.ts') ? ({ value: 'a\nb\nc\n' } as any) : ({ deny: 'missing' } as any)))
   let n = 0
   // The engine starting an agent (as core would): the plugin's agent.spawn hook runs above this.
   on('agent.spawn', (_, e) => {
+    if (w.failSpawn) throw new Error('engine fell over')
     const id = `rev-${++n}`
     w.spawned.push({ type: e.subagentType, prompt: e.prompt, id })
     return { model: 'claude-opus-5-5', agentId: id }
   })
   // The Agent tool's own result, once the foreground agent has finished.
   on('tool.call', (_, e: any) => {
+    ;((w as any).toolInputs ??= []).push(e)
     if (e.tool !== 'Agent') return { result: { ok: true } } as any
     const id = [...w.spawned].reverse().find(s => s.type === e.subagent_type)?.id
     if (!id) return { deny: 'no agent' } as any
@@ -520,4 +551,324 @@ test('background: every reviewer stopped before it answered: INCOMPLETE, not mar
   expect(note).not.toMatch(/STALE/) // nothing answered: the tree is not re-hashed, and nothing is called stale
   expect(await status($)).toMatch(/last checkpoint #\d+: partial/)
   expect(await councilCall($, { summary: 'again', selection: 'all' })).toMatch(/authorized/)
+})
+
+// ---- audit regressions (branch audit/council-reliability-security-perf) ---------
+
+test('audit: a reviewer is confined to the repository and cannot reach a secret by glob, symlink or path', async ($, on) => {
+  const w = engine(on)
+  w.real['/repo/notes.txt'] = '/repo/.env' // innocent name, secret target
+  w.real['/repo/docs/out'] = '/Users/me/.ssh'
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-c')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Grep', pattern: 'KEY', path: '/repo', glob: '.env*' })).toMatch(/could select secret files/)
+  expect(await as({ tool: 'Grep', pattern: 'KEY', glob: '*' })).toMatch(/could select secret files/)
+  expect(await as({ tool: 'Read', file_path: 'notes.txt' })).toMatch(/leads to a secret/)
+  expect(await as({ tool: 'Grep', pattern: 'x', path: 'docs/out' })).toMatch(/leads outside the repository/)
+  expect(await as({ tool: 'Read', file_path: '/etc/passwd' })).toMatch(/outside the repository/)
+  expect(await as({ tool: 'Read', file_path: '../elsewhere/x.ts' })).toMatch(/outside the repository/)
+  expect(await as({ tool: 'Read', file_path: '~/.claude.json' })).toMatch(/looks like a secret|inside the repository only/)
+  // The ordinary review work still goes through, and every refusal is in the ledger.
+  expect(await as({ tool: 'Read', file_path: 'src/db.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Read', file_path: '/repo/src/db.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Grep', pattern: 'query', glob: '*.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Glob', pattern: '**/*.ts' })).not.toMatch(/deny/)
+  expect((await run($, 'council ledger')).match(/deny/g)?.length).toBeGreaterThanOrEqual(7)
+})
+
+test('audit: new untracked file CONTENT is part of the snapshot: an edited new file is a new diff, and an edit during the review is stale', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const s = await spawn($, 'security', 'tu-u')
+  w.untrackedBody = 'v2' // the new file is edited while the reviewer reads it
+  await finish($, s.agentId, ANSWER())
+  const { note } = await agentResult($, 'security', 'tu-u')
+  expect(note).toMatch(/STALE/)
+  // Same names, same tracked diff, different new-file content: not "already reviewed".
+  await leadTurnWithAdvisor($)
+  expect(await councilCall($, { summary: 's', selection: 'security' })).toMatch(/authorized/)
+  // Secret-looking untracked files are hashed but never named to a reviewer.
+  expect(w.spawned.every(x => !x.prompt.includes('.env'))).toBe(true)
+  expect(w.gitCalls.some(a => a[1] === 'hash-object' && !a.includes('--'))).toBe(false)
+})
+
+test('audit: unchanged untracked content and diff is still reviewed once', async ($, on) => {
+  engine(on)
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  await review($, 'security', ANSWER())
+  await leadTurnWithAdvisor($)
+  expect(await councilCall($, { summary: 's', selection: 'security' })).toMatch(/already reviewed this session/)
+})
+
+test('audit: a launch the engine throws on does not wedge Council for the rest of the session', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  w.failSpawn = true
+  const failed = JSON.stringify(await spawn($, 'security', 'tu-f').catch((e: unknown) => ({ deny: String(e) })))
+  expect(failed).toMatch(/deny|refused/)
+  expect(await status($)).toMatch(/SECURITY\s+failed/)
+  w.failSpawn = false
+  await leadTurnWithAdvisor($)
+  const again = await councilCall($, { summary: 's', selection: 'security' })
+  expect(again).not.toMatch(/already running/)
+  expect(again).toMatch(/authorized/)
+  const s = await spawn($, 'security', 'tu-g')
+  expect(s.agentId).toBeTruthy()
+})
+
+test('audit: finding paths from a reviewer are never read outside the repository, and secrets are not read to count lines', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const answer = (file: string) => `{"severity":"low","file":"${file}","line":1,"title":"t ${file.length}","evidence":"leaked: hunter2","action":"a"}`
+  const { note } = await review($, 'security', '```json\n[' + [answer('../../../etc/passwd'), answer('/etc/hosts'), answer('config/.env'), answer('src/db.ts')].join(',') + ']\n```')
+  expect(w.fsReads.some(p => /passwd|hosts|\.env/.test(p))).toBe(false)
+  expect(w.fsReads.some(p => p.endsWith('src/db.ts'))).toBe(true)
+  expect(note).toMatch(/reference outside-repo/)
+  expect(note).toMatch(/reference secret-path/)
+  expect(note).not.toMatch(/hunter2.*\n.*hunter2.*\n.*hunter2.*\n.*hunter2/) // withheld for three of the four
+  expect((note.match(/hunter2/g) ?? []).length).toBe(1)
+})
+
+test('audit: Council follows the session\'s directory now, and works from the repository\'s top level when that is a subfolder', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  w.cwd = '/repo/mod/nexus' // the lead moved (a worktree, /cd) after session.start, into a folder of the repository
+  w.top = '/repo'
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const inits = w.gitCalls.map((a, i) => ({ a, cwd: w.gitCwds[i] }))
+  expect(inits.find(x => x.a.includes('--show-toplevel'))!.cwd).toBe('/repo/mod/nexus') // asked from where the session is
+  const rest = inits.filter(x => !x.a.includes('--show-toplevel'))
+  expect(rest.length).toBeGreaterThan(0)
+  expect(rest.every(x => x.cwd === '/repo')).toBe(true) // everything else from the top level, where git names files from
+  // Reviewers: the repository is the boundary, not the folder, and not where the session started (/home/me).
+  const s = await spawn($, 'security', 'tu-top')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId: s.agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Read', file_path: '/home/me/.zsh_history' })).toMatch(/outside the repository/)
+  expect(await as({ tool: 'Read', file_path: '/repo/tests/x.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Read', file_path: '../../src/db.ts' })).not.toMatch(/deny/) // climbs out of the folder, still inside the repository
+  expect(await as({ tool: 'Read', file_path: '../../../etc/hosts' })).toMatch(/outside the repository/)
+  // A finding's path is the repository's: its lines are counted from the top level.
+  await finish($, s.agentId, ANSWER('src/db.ts', 2))
+  const { note } = await agentResult($, 'security', 'tu-top')
+  expect(w.fsReads).toContain('/repo/src/db.ts')
+  expect(note).not.toMatch(/reference missing-file/)
+})
+
+test('audit: a developer env override for the council mode is for the session only: it is not written to the saved settings', async ($, on) => {
+  const st = engine(on, { prefs: { version: 3, council: { activation: 'adaptive' } } }, 'opus', { NEXUS_COUNCIL_ACTIVATION: 'on' })
+  await start($)
+  expect(await status($)).toMatch(/NEXUS Council: on/)
+  await run($, 'settings animation reduced') // any later settings change saves the preferences
+  expect((st.saved.prefs as any).animation).toBe('reduced')
+  expect((st.saved.prefs as any).council.activation).toBe('adaptive')
+  // The user's own choice still saves, even the one the override already set.
+  await run($, 'council on')
+  expect((st.saved.prefs as any).council.activation).toBe('on')
+  await run($, 'council off')
+  expect((st.saved.prefs as any).council.activation).toBe('off')
+})
+
+test('audit: a store that cannot be read at start does not overwrite the saved settings with defaults', async ($, on) => {
+  const st = engine(on, { prefs: { version: 3, council: { activation: 'on' }, animation: 'full' } })
+  st.unreadable = true
+  await start($)
+  await run($, 'settings animation reduced')
+  expect(st.sets).toEqual([])
+  expect((st.saved.prefs as any).council.activation).toBe('on')
+  expect(await status($)).toMatch(/NEXUS Council: adaptive/) // defaults serve this session
+})
+
+// ---- audit round 2: the council's own review of this diff (checkpoint #1) --------
+
+test('audit: a partial checkpoint (some authorized reviewers never launched) still hands the lead its verdict', async ($, on) => {
+  engine(on)
+  await start($)
+  await run($, 'council on')
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'all' })
+  const { note } = await review($, 'security', ANSWER())
+  expect(note).toMatch(/SECURITY done\. Waiting for architecture, performance/) // the others were never launched
+  await $.turn.complete({ turnId: `L${world.t}`, answer: 'done', durationMs: 1, isAborted: false, reason: 'answer' })
+  expect(await status($)).toMatch(/last checkpoint #\d+: partial/)
+  // Not dropped: the verdict rides on the lead's next prompt, with the findings and what did not run.
+  const next = await ctx($.prompt.submit({ text: 'what did the council say?', origin: { kind: 'composer' } } as any))
+  expect(next).toMatch(/NEXUS Council · snapshot [0-9a-f]+ · on/)
+  expect(next).toMatch(/Query runs inside the loop over users/)
+  expect(next).toMatch(/ARCHITECTURE: (idle|not launched|authorized)/i)
+})
+
+test('audit: a peer hand-back is read from its message body when the SubagentHandback call itself was not seen', async ($, on) => {
+  const { ids } = await launchBackground($, on)
+  // No tool.call for SubagentHandback: the only copy of the report is the indented body of the message to the lead.
+  const body = ANSWER().split('\n').map(l => `  ${l}`).join('\n')
+  const text = `Another Claude session sent a message:\n<agent-message from="${ids.security}">\n[Subagent hand-back] The text below is the final report. The report follows:\n${body}\n</agent-message>`
+  expect(await ctx($.prompt.submit({ text, origin: { kind: 'peer' }, isMeta: true } as any))).toMatch(/SECURITY done\. Waiting for architecture, performance/)
+  expect(await status($)).not.toMatch(/SECURITY\s+incomplete/)
+})
+
+test('audit: new files that cannot be hashed are said so, never called stale; a failed hash never counts as "already reviewed"', async ($, on) => {
+  const w = engine(on) as any
+  w.hashCalls = 0
+  w.hashFail = (n: number) => n === 2 // the re-check after the review times out
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { note } = await review($, 'security', ANSWER())
+  expect(note).not.toMatch(/STALE/)
+  expect(note).toMatch(/could not re-check new files/)
+  // Every hash fails from here: two failed snapshots of one tree do not look alike.
+  w.hashFail = () => true
+  await leadTurnWithAdvisor($)
+  expect(await councilCall($, { summary: 's', selection: 'security' })).toMatch(/authorized/)
+  const second = await review($, 'security', ANSWER())
+  expect(second.note).not.toMatch(/already reviewed/)
+  await leadTurnWithAdvisor($)
+  expect(await councilCall($, { summary: 's', selection: 'security' })).toMatch(/authorized/) // not skipped as reviewed
+})
+
+test('audit: the checkpoint keeps its repository root when the session moves: line counts, git_read and confinement stay on it', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const s = await spawn($, 'security', 'tu-mv')
+  w.cwd = '/other'
+  w.top = '/other' // /cd into another repository while the reviewer runs
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId: s.agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Read', file_path: '/repo/src/db.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Read', file_path: '/other/src/db.ts' })).toMatch(/outside the repository/)
+  // Council round 2: with no path, Grep and Glob would search /other, the session's directory now.
+  expect(await as({ tool: 'Grep', pattern: 'KEY' })).toMatch(/outside the repository under review/)
+  expect(await as({ tool: 'Glob', pattern: '**/*.ts' })).toMatch(/outside the repository under review/)
+  expect(await as({ tool: 'Grep', pattern: 'KEY', path: '/repo/src' })).not.toMatch(/deny/)
+  w.gitCalls.length = 0
+  w.gitCwds.length = 0
+  await as({ tool: 'mcp__nexus__request_capability', capability: 'git_read', reason: 'history' })
+  expect(await as({ tool: 'mcp__nexus__git_read', op: 'log' })).toMatch(/abc123 first commit/)
+  expect(w.gitCalls.some(a => a[1] === 'log')).toBe(true)
+  await finish($, s.agentId, ANSWER('src/db.ts', 2))
+  const { note } = await agentResult($, 'security', 'tu-mv')
+  expect(w.fsReads.every(p => !p.startsWith('/other'))).toBe(true)
+  expect(w.fsReads).toContain('/repo/src/db.ts')
+  expect(w.gitCwds.filter(Boolean).every(c => c === '/repo')).toBe(true)
+  expect(note).not.toMatch(/STALE/)
+})
+
+test('audit: when the file system cannot say where a path leads, the read is refused; only a missing file is "not there yet"', async ($, on) => {
+  const w = engine(on) as any
+  w.statFail = { '/repo/linked.txt': 'EACCES: permission denied', '/repo/src/new.ts': 'ENOENT: no such file' }
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-st')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Read', file_path: 'linked.txt' })).toMatch(/could not tell where it leads/)
+  expect(await as({ tool: 'Read', file_path: 'src/new.ts' })).not.toMatch(/deny/)
+})
+
+test('council round 2: a stat error on the repository root refuses that call only; it is not cached for the session', async ($, on) => {
+  const w = engine(on) as any
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-root')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  w.statFail = { '/repo': 'EBUSY: resource busy' }
+  expect(await as({ tool: 'Read', file_path: 'src/db.ts' })).toMatch(/could not tell where it leads/)
+  w.statFail = {}
+  expect(await as({ tool: 'Read', file_path: 'src/db.ts' })).not.toMatch(/deny/)
+})
+
+test('council round 3: the reviewer Grep that reaches the tool carries the secret negations after its own glob', async ($, on) => {
+  const w = engine(on) as any
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-neg')
+  await $.tool.call({ tool: 'Grep', pattern: 'KEY', glob: '*.ts', agentId } as any)
+  await $.tool.call({ tool: 'Grep', pattern: 'KEY', agentId } as any)
+  const greps = w.toolInputs.filter((e: any) => e.tool === 'Grep')
+  expect(greps[0].glob.startsWith('*.ts ')).toBe(true)
+  expect(greps[0].glob).toContain('!.[eE][nN][vV].*')
+  expect(greps[1].glob.startsWith('!')).toBe(true)
+  // The lead's own Grep is not rewritten.
+  await $.tool.call({ tool: 'Grep', pattern: 'KEY', glob: '*.ts' } as any)
+  expect(w.toolInputs.filter((e: any) => e.tool === 'Grep').at(-1).glob).toBe('*.ts')
+})
+
+test('council round 3: when the root and the path both fail to resolve, the read is refused (the two failures do not match each other)', async ($, on) => {
+  const w = engine(on) as any
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-both')
+  w.statFail = { '/repo': 'EIO: i/o error', '/etc/passwd': 'EIO: i/o error' }
+  const r = JSON.stringify(await $.tool.call({ tool: 'Read', file_path: '/etc/passwd', agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(r).toMatch(/deny/)
+  expect(w.fsReads).not.toContain('/etc/passwd')
+})
+
+test('council round 3: a reviewer left running outside any repository is refused, not confined to wherever the session is', async ($, on) => {
+  const w = engine(on) as any
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const s = await spawn($, 'security', 'tu-norepo')
+  await finish($, s.agentId, ANSWER('src/db.ts', 2))
+  await agentResult($, 'security', 'tu-norepo') // the checkpoint closes; the reviewer id stays known to the gate
+  w.cwd = '/tmp/elsewhere'
+  w.notRepo = true
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId: s.agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Grep', pattern: 'KEY' })).toMatch(/could not tell where the repository is/)
+  expect(await as({ tool: 'Read', file_path: 'x.ts' })).toMatch(/could not tell where the repository is/)
+})
+
+test('council round 4: a changed tracked secret is left out of the reviewers\' diff, and changing it is still a new snapshot', async ($, on) => {
+  const w = engine(on) as any
+  w.secretDiff = 'diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-A=1\n+A=MARKER\n'
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const diffCall = w.gitCalls.find((a: string[]) => a[1] === 'diff' && !a.some(x => x.startsWith(':(glob,icase)')))
+  expect(diffCall).toContain(':(exclude,glob,icase)**/.env')
+  const s = await spawn($, 'security', 'tu-sec')
+  const task = w.spawned.find((x: any) => x.id === s.agentId).prompt as string
+  expect(task).not.toContain('MARKER')
+  expect(task).toMatch(/1 changed file\(s\) that look like secrets were left out of the diff/)
+  // Editing only the secret during the review makes the checkpoint stale.
+  w.secretDiff = w.secretDiff.replace('MARKER', 'MARKER2')
+  await finish($, s.agentId, ANSWER('src/db.ts', 2))
+  const { note } = await agentResult($, 'security', 'tu-sec')
+  expect(note).toMatch(/STALE/i)
+})
+
+test('council round 5: a session whose directory is spelled through a symlink (/tmp vs /private/tmp) can still read its repository', async ($, on) => {
+  const w = engine(on) as any
+  w.cwd = '/tmp/repo'
+  w.top = '/private/tmp/repo' // git names the physical path; the session its own spelling
+  w.real['/tmp/repo'] = '/private/tmp/repo'
+  w.real['/tmp/repo/src/db.ts'] = '/private/tmp/repo/src/db.ts'
+  w.real['/tmp/repo/src'] = '/private/tmp/repo/src'
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-sym')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Read', file_path: 'src/db.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Grep', pattern: 'KEY' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Glob', pattern: '**/*.ts' })).not.toMatch(/deny/)
+  // Still confined: elsewhere is refused however it is spelled.
+  expect(await as({ tool: 'Read', file_path: '/tmp/other/x.ts' })).toMatch(/deny/)
 })

@@ -263,7 +263,7 @@ export type Finding = {
   action: string
   confidence: number | null
   /** ok: the file and line exist in the working tree; else why not. */
-  ref: 'ok' | 'no-ref' | 'missing-file' | 'line-out-of-range' | 'secret-path'
+  ref: 'ok' | 'no-ref' | 'missing-file' | 'line-out-of-range' | 'secret-path' | 'outside-repo'
 }
 
 export type Checkpoint = {

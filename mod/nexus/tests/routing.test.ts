@@ -220,6 +220,17 @@ test('never routed: a subagent read or a read outside the workspace', async ($, 
   expect(w.asks.some(a => a.question === 'which file' && a.criteria.includes('a.ts'))).toBe(false)
 })
 
+test('audit: a read that only starts with the workspace path (`/ws/../etc/x`) is outside it: no sibling listing, no hint', async ($, on) => {
+  const w = engine(on, { reads: [], siblings: ['a.ts', 'b.ts'], answer: () => ({ choice: 'a.ts', p: 0.99, confidence: 0.99 }) })
+  await start($)
+  await active($)
+  const before = w.asks.length // calibration asks 'which file' too
+  await read($, `${CWD}/../elsewhere/x.ts`)
+  expect(w.asks.slice(before).some(a => a.question === 'which file')).toBe(false)
+  await read($, `${CWD}/x.ts`) // control: a real workspace read still gets its hint
+  expect(w.asks.slice(before).some(a => a.question === 'which file')).toBe(true)
+})
+
 test('/nexus-jev observe turns routing off at once', async ($, on) => {
   const w = engine(on, { reads: ['timeout'], answer: a => (a.question === 'retry or stop' ? { choice: 'retry', p: 0.95, confidence: 0.9 } : { choice: 'Read', p: 0.3, confidence: 0.2 }) })
   await start($)

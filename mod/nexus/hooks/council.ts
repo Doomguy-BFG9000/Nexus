@@ -69,6 +69,10 @@ export type Snapshot = {
   isTruncated: boolean
   /** Untracked files left out because they look like secrets. */
   withheld?: number
+  /** Changed tracked files left out of the diff because they look like secrets. */
+  secretChanges?: number
+  /** True when the content of the untracked files could not be hashed: the hash then stands for names only and is never compared. */
+  isUnhashed?: boolean
 }
 
 /** Diff text a reviewer gets in its prompt; past this it is told the rest was cut and to Read the files. */
@@ -85,6 +89,7 @@ export function reviewerTask(role: CouncilRole, snap: Snapshot, summary: string,
     `Changed files: ${snap.files.join(', ') || 'none listed'}`,
     snap.untracked.length ? `New untracked files (not in the diff; Read them): ${snap.untracked.join(', ')}` : '',
     snap.withheld ? `${snap.withheld} untracked file(s) that look like secrets were withheld; do not try to read them.` : '',
+    snap.secretChanges ? `${snap.secretChanges} changed file(s) that look like secrets were left out of the diff; do not try to read them.` : '',
     cut ? `The diff below is TRUNCATED at ${DIFF_CHARS} characters. Read the changed files for the rest; do not assume what you cannot see.` : '',
     '```diff',
     diff || '(no tracked changes)',
@@ -134,6 +139,20 @@ export function reviewersFor(activation: 'off' | 'adaptive' | 'on', pick: Counci
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const
 
+/**
+ * One bounded line of reviewer text: cut first (redact() is quadratic on long token-like runs, and a
+ * reviewer's output is shaped by the code it read), then one line, so a finding can never start a
+ * line of its own in the verdict, then masked.
+ */
+function oneLine(text: string, max: number): string {
+  return redact(text.slice(0, max * 2).replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim()).slice(0, max)
+}
+
+/** C0 and C1 controls (ESC included) and the Unicode line and paragraph separators: none may reach the verdict. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g
+/** The same class without /g, for .test: a global regex keeps lastIndex between calls. */
+const HAS_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
+
 /** The findings in a reviewer's answer: the last ```json block (or a bare array). Null when none parses. */
 export function parseFindings(answer: string, role: CouncilRole): Omit<Finding, 'ref'>[] | null {
   const blocks = [...answer.matchAll(/```json\s*([\s\S]*?)```/g)].map(m => m[1]!)
@@ -146,23 +165,26 @@ export function parseFindings(answer: string, role: CouncilRole): Omit<Finding, 
       continue
     }
     if (!Array.isArray(data)) continue
-    return data.flatMap(item => {
+    // A reviewer's list is bounded: the verdict, the line counts and the lead's context do not scale with what it echoes.
+    return data.slice(0, 100).flatMap(item => {
       if (!item || typeof item !== 'object') return []
       const f = item as Record<string, unknown>
-      const title = typeof f.title === 'string' ? f.title.trim() : ''
+      const title = typeof f.title === 'string' ? oneLine(f.title, 200) : ''
       if (!title) return []
       const severity = (SEVERITIES as readonly string[]).includes(String(f.severity).toLowerCase()) ? (String(f.severity).toLowerCase() as Finding['severity']) : 'info'
       const line = typeof f.line === 'number' && Number.isInteger(f.line) && f.line > 0 ? f.line : null
       const confidence = typeof f.confidence === 'number' && f.confidence >= 0 && f.confidence <= 1 ? f.confidence : null
+      // A path is kept as written (redacting or collapsing spaces would point it at no file); one with a line break or control character is dropped.
+      const file = typeof f.file === 'string' && !HAS_CONTROL.test(f.file) ? f.file.trim().slice(0, 300).replace(/^\.\//, '') : ''
       return [{
         role,
         alsoBy: [],
         severity,
-        file: typeof f.file === 'string' && f.file.trim() ? f.file.trim().replace(/^\.\//, '') : null,
+        file: file || null,
         line,
-        title: redact(title).slice(0, 200),
-        evidence: typeof f.evidence === 'string' ? redact(f.evidence.trim()).slice(0, 600) : '',
-        action: typeof f.action === 'string' ? redact(f.action.trim()).slice(0, 400) : '',
+        title,
+        evidence: typeof f.evidence === 'string' ? oneLine(f.evidence, 600) : '',
+        action: typeof f.action === 'string' ? oneLine(f.action, 400) : '',
         confidence,
       }]
     })
@@ -187,10 +209,41 @@ export function relPath(file: string | null, root: string): string | null {
   return root && file.startsWith(r) ? file.slice(r.length) : file
 }
 
-/** Paths a reviewer may not read and NEXUS will not quote. */
+/** Paths a reviewer may not read and NEXUS will not quote. A deny-list on spellings: see `mayCall` for the allow-list that backs it. */
 export function isSecretPath(path: string): boolean {
   const base = path.split('/').pop() ?? path
-  return /^\.env(\..*)?$/i.test(base) || /\.(pem|key|p12|pfx|keychain(-db)?)$/i.test(base) || /^id_(rsa|ecdsa|ed25519)/.test(base) || /(^|\/)(secrets?|credentials)(\/|$)/i.test(path) || /^credentials.*\.json$/i.test(base) || /\.netrc$|\.npmrc$|\.pypirc$/.test(base)
+  return (
+    /^\.env([._\d-].*)?$/i.test(base) ||
+    /^\.envrc$/i.test(base) ||
+    /\.(pem|key|p12|pfx|keychain(-db)?)$/i.test(base) ||
+    /^id_(rsa|ecdsa|ed25519|dsa)/i.test(base) ||
+    /(^|\/)(secrets?|credentials)(\/|$)/i.test(path) ||
+    /^credentials.*\.json$/i.test(base) ||
+    /^\.(netrc|npmrc|pypirc|pgpass|git-credentials|claude\.json)$/i.test(base) ||
+    /(^|\/)\.(aws|ssh|gnupg|kube)(\/|$)/i.test(path) ||
+    /(^|\/)\.docker\/config\.json$/i.test(path) ||
+    /(^|\/)\.git\/config$/i.test(path)
+  )
+}
+
+/**
+ * Every class isSecretPath refuses, as globs: the one source for the git exclusions (diff, show) and the reviewer Grep
+ * negations, so the lists cannot drift apart. A name without a slash matches at any depth.
+ */
+export const SECRET_GLOBS = [
+  '.env', '.env.*', '.env_*', '.env-*', '.env[0-9]*', '.envrc', '*.pem', '*.key', '*.p12', '*.pfx', '*.keychain', '*.keychain-db',
+  'id_rsa*', 'id_ecdsa*', 'id_ed25519*', 'id_dsa*', 'credentials*.json', '.netrc', '.npmrc', '.pypirc', '.pgpass', '.git-credentials', '.claude.json',
+  'secrets', 'secret', 'credentials', 'secrets/**', 'secret/**', 'credentials/**', '.aws/**', '.ssh/**', '.gnupg/**', '.kube/**', '.docker/config.json', '.git/config',
+]
+
+/** Pathspecs that leave the secret files out of a `git diff` or `git show` patch; case-insensitive, as isSecretPath is. */
+export const SHOW_EXCLUDES = SECRET_GLOBS.map(g => `:(exclude,glob,icase)**/${g}`)
+/** Pathspecs that select only the secret files: hashed for staleness, never shown. */
+export const SECRET_PATHSPECS = SECRET_GLOBS.map(g => `:(glob,icase)**/${g}`)
+
+/** A finding's path (relative to the repository once the root is cut off) that is absolute, `~` or climbs out with `..`: NEXUS neither reads nor quotes it. */
+export function leavesRepo(file: string): boolean {
+  return file.startsWith('/') || file.startsWith('~') || file.split('/').includes('..')
 }
 
 /** Checks each finding's reference against the files as they are now: `lines` maps file → its line count, or null when unreadable. */
@@ -198,6 +251,8 @@ export function checkRefs(findings: Omit<Finding, 'ref'>[], lines: Record<string
   return findings.map(f => {
     if (!f.file) return { ...f, ref: 'no-ref' as const }
     if (isSecretPath(f.file)) return { ...f, evidence: '(withheld: secret path)', ref: 'secret-path' as const }
+    // A reviewer's path is data from a reviewer: absolute or climbing out of the repository, it is not read or quoted.
+    if (leavesRepo(f.file)) return { ...f, evidence: '(withheld: outside the repository)', ref: 'outside-repo' as const }
     const n = lines[f.file]
     if (n === null || n === undefined) return { ...f, ref: 'missing-file' as const }
     if (f.line !== null && f.line > n) return { ...f, ref: 'line-out-of-range' as const }
@@ -287,11 +342,175 @@ export function route(capability: string): RouteDecision {
   return { decision: 'deny', rule: 'not on the reviewer allowlist' }
 }
 
-/** May this reviewer call `tool` now? The definition already withholds the rest; this is the second check. */
-export function mayCall(tool: string, granted: readonly string[], input: Record<string, unknown>): { ok: true } | { ok: false; why: string } {
+/** What NEXUS records when the file system could not say where a path leads: never inside anything. */
+export const UNRESOLVED = '/\0unresolvable'
+
+/** Where a reviewer's paths are allowed to land: the session's directories as written and as the file system resolves them. */
+export type PathCtx = {
+  /** What a relative path is relative to: the session's directory (which may be a folder inside the repository). */
+  base?: string
+  /** Where a reviewer may read: the repository's top level. */
+  roots: readonly string[]
+  realRoots: readonly string[]
+  /** Where the call's path lands once symlinks are followed; null/undefined when it leads nowhere (yet). */
+  realPath?: string | null
+  /** Where `base` lands once symlinks are followed (asked for only by a call with no path). */
+  realBase?: string | null
+}
+
+/** An absolute, normalised spelling of `path` ('.' and '..' resolved lexically) against `base`. */
+export function normalizePath(path: string, base: string): string {
+  const parts: string[] = []
+  for (const seg of (path.startsWith('/') ? path : `${base}/${path}`).split('/')) {
+    if (!seg || seg === '.') continue
+    if (seg === '..') parts.pop()
+    else parts.push(seg)
+  }
+  return `/${parts.join('/')}`
+}
+
+const within = (path: string, root: string) => path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`)
+
+/** Names a wildcard glob must not be able to match: a whitelist glob makes ripgrep search files .gitignore hides. */
+const SECRET_SAMPLES = [
+  '.env', '.env.local', '.env.production', '.envrc', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', 'server.pem', 'tls.key', 'cert.p12', 'cert.pfx',
+  '.netrc', '.npmrc', '.pypirc', '.pgpass', '.git-credentials', '.claude.json', 'credentials.json', 'credentials-prod.json',
+  '.env_x', '.env-x', '.env1', 'login.keychain', 'login.keychain-db', 'secrets', 'secret', 'credentials',
+  // The directory classes isSecretPath refuses, as a glob could reach into them.
+  'secrets/x', 'secret/x', 'credentials/x', '.aws/credentials', '.ssh/id_rsa', '.gnupg/x', '.kube/config', '.docker/config.json', '.git/config',
+]
+
+/** A glob as ripgrep's globset reads it (a name without a slash matches at any depth); null when unreadable. */
+export function globRegExp(glob: string): RegExp | null {
+  let re = ''
+  let depth = 0
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        re += '.*'
+        i++
+        if (glob[i + 1] === '/') i++
+      } else re += '[^/]*'
+    } else if (c === '?') re += '[^/]'
+    else if (c === '{') {
+      depth++
+      re += '(?:'
+    } else if (c === '}' && depth > 0) {
+      depth--
+      re += ')'
+    } else if (c === ',' && depth > 0) re += '|'
+    else if (c === '[') {
+      const end = glob.indexOf(']', i + 1)
+      if (end < 0) return null
+      re += `[${glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`
+      i = end
+    } else re += c.replace(/[.+^$()|\\\]]/g, '\\$&')
+  }
+  if (depth !== 0) return null
+  try {
+    return new RegExp(`^(?:.*/)?(?:${re})$`)
+  } catch {
+    return null
+  }
+}
+
+/** `.env` → `.[eE][nN][vV]`: ripgrep globs are case-sensitive, isSecretPath is not. */
+const anyCase = (g: string) => g.replace(/[a-z]/gi, c => `[${c.toLowerCase()}${c.toUpperCase()}]`)
+
+/** Negations for every class isSecretPath refuses, appended to each reviewer Grep: in ripgrep a later glob wins. */
+export const SECRET_NEGATIONS = SECRET_GLOBS.map(g => `!${anyCase(g.includes('/') ? `**/${g}` : g)}`)
+
+/**
+ * A reviewer Grep's glob with the secret negations after it. A whitelist glob overrides .gitignore, and no check on its
+ * spelling can be complete (probed: `*.ts` searched a gitignored `.env.ts`); the negations after it exclude them all.
+ */
+export function guardGrepGlob(glob: unknown): string {
+  return [typeof glob === 'string' ? glob.trim() : '', ...SECRET_NEGATIONS].filter(Boolean).join(' ')
+}
+
+/**
+ * The globs Claude Code's Grep passes to ripgrep from one `glob` string: split on whitespace, then on commas
+ * outside braces (probed on 2.1.317: `*.ts .env`, `*.ts,.env` and `{*.ts,.env}` each searched a gitignored `.env`).
+ */
+export function splitGlobs(glob: string): string[] {
+  const out: string[] = []
+  for (const word of glob.trim().split(/\s+/).filter(Boolean)) {
+    let depth = 0
+    let cur = ''
+    for (const c of word) {
+      if (c === '{') depth++
+      else if (c === '}' && depth > 0) depth--
+      if (c === ',' && depth === 0) {
+        if (cur) out.push(cur)
+        cur = ''
+      } else cur += c
+    }
+    if (cur) out.push(cur)
+  }
+  return out
+}
+
+/**
+ * Whether a Grep `glob` could select a secret file: any one of the globs it splits into. Unreadable globs count as yes.
+ * A negation (`!*.ts`) only narrows: ripgrep still honours .gitignore under negations alone (probed). This refuses the
+ * plain cases with a reason; guardGrepGlob is what closes the rest.
+ */
+export function globTargetsSecret(glob: string): boolean {
+  return splitGlobs(glob).some(oneGlobTargetsSecret)
+}
+
+function oneGlobTargetsSecret(g: string): boolean {
+  if (!g || g.startsWith('!')) return false
+  // ripgrep reads a backslash as an escape (`\.env` is `.env`); a spelling this check cannot follow is refused.
+  if (g.includes('\\')) return true
+  if (isSecretPath(g)) return true
+  const re = globRegExp(g)
+  if (!re) return true
+  const slash = g.search(/[*?[{]/)
+  const dir = slash < 0 ? '' : g.slice(0, g.lastIndexOf('/', slash) + 1)
+  return SECRET_SAMPLES.some(n => re.test(n) || re.test(`${dir}${n}`))
+}
+
+/**
+ * May this reviewer call `tool` now? The definition already withholds the rest; this is the second
+ * check, and it is NEXUS's own: Claude Code's permission rules are not consulted. Paths are an
+ * allow-list (inside the session's directories, after following symlinks) backed by a deny-list of
+ * secret spellings; a Grep glob that could select a secret file is refused.
+ */
+export function mayCall(tool: string, granted: readonly string[], input: Record<string, unknown>, ctx?: PathCtx): { ok: true } | { ok: false; why: string } {
+  // Confinement is not opt-in: a base-tool call, with or without a path, with no directories to confine it to, is refused.
   if ((BASE_TOOLS as readonly string[]).includes(tool)) {
     const path = ['file_path', 'path'].map(k => input[k]).find(v => typeof v === 'string') as string | undefined
-    if (path && isSecretPath(path)) return { ok: false, why: `${path} looks like a secret; reviewers do not read secrets` }
+    if (path) {
+      if (isSecretPath(path)) return { ok: false, why: `${path} looks like a secret; reviewers do not read secrets` }
+      if (path.startsWith('~')) return { ok: false, why: `${path}: reviewers read inside the repository only` }
+      if (!ctx || !ctx.roots.length) return { ok: false, why: `${path}: NEXUS could not tell where the repository is, so reviewers cannot read it` }
+      {
+        const base = ctx.base ?? ctx.roots[0] ?? '/'
+        const lexical = normalizePath(path, base)
+        // Refused outright: two failures to resolve (the root's and the path's) must never match each other.
+        if (ctx.realPath === UNRESOLVED || ctx.realRoots.includes(UNRESOLVED)) return { ok: false, why: `${path}: NEXUS could not tell where it leads, so reviewers cannot read it` }
+        // Where it really lands decides; the spelling only when it does not exist yet (`/tmp/x` and `/private/tmp/x` are one place).
+        if (!ctx.realPath && ![...ctx.roots, ...ctx.realRoots].some(r => within(lexical, r))) return { ok: false, why: `${path} is outside the repository; reviewers read inside it only` }
+        if (ctx.realPath) {
+          if (!ctx.realRoots.some(r => within(ctx.realPath!, r))) return { ok: false, why: `${path} leads outside the repository; reviewers read inside it only` }
+          if (isSecretPath(ctx.realPath)) return { ok: false, why: `${path} leads to a secret; reviewers do not read secrets` }
+        }
+        if (isSecretPath(lexical)) return { ok: false, why: `${path} looks like a secret; reviewers do not read secrets` }
+      }
+    } else {
+      // No path: Grep and Glob search the session's directory, which may have moved (/cd) off the checkpoint's repository.
+      if (!ctx || !ctx.roots.length || !ctx.base) return { ok: false, why: `${tool} without a path: NEXUS could not tell where the repository is; pass a path inside it` }
+      const base = normalizePath(ctx.base, '/')
+      const realBase = ctx.realBase && ctx.realBase !== UNRESOLVED && !ctx.realRoots.includes(UNRESOLVED) ? ctx.realBase : null
+      if (![...ctx.roots, ...ctx.realRoots].some(r => within(base, r)) && !(realBase && ctx.realRoots.some(r => within(realBase, r)))) return { ok: false, why: `${tool} without a path would search ${ctx.base}, outside the repository under review; pass a path inside it` }
+    }
+    // Glob's pattern is a path too: it lists names wherever it points.
+    const pattern = tool === 'Glob' && typeof input.pattern === 'string' ? input.pattern.trim() : ''
+    if (pattern && (leavesRepo(pattern) || pattern.includes('..') || /[{,][\/~]/.test(pattern))) return { ok: false, why: `pattern ${pattern} lists files outside the repository; use a pattern relative to it` }
+    const glob = tool === 'Grep' && typeof input.glob === 'string' ? input.glob : ''
+    if (glob && globTargetsSecret(glob)) return { ok: false, why: `glob ${glob} could select secret files; use a narrower glob such as *.ts` }
     return { ok: true }
   }
   if (tool === REQUEST_TOOL || tool === REPORT_TOOL) return { ok: true }
@@ -303,7 +522,9 @@ export function mayCall(tool: string, granted: readonly string[], input: Record<
 
 /** The fixed argv git_read may run, or why not. Paths and refs are checked; nothing reaches a shell. */
 export function gitArgv(op: unknown, target: unknown, ref: unknown): { argv: string[] } | { error: string } {
-  const safePath = (p: unknown) => typeof p === 'string' && p.length > 0 && p.length < 300 && !p.startsWith('-') && !p.startsWith('/') && !p.includes('..') && !isSecretPath(p)
+  // A leading ':' is git's pathspec magic (`:(glob)`, `:!`, `:/`): it would select files by pattern, past isSecretPath.
+  // Git reads `*`, `?` and `[` in a path as wildcards (`*env` selects `.env`), and a backslash escapes them: refused.
+  const safePath = (p: unknown) => typeof p === 'string' && p.length > 0 && p.length < 300 && !p.startsWith('-') && !p.startsWith('/') && !p.startsWith(':') && !p.includes('..') && !/[*?[\\]/.test(p) && !isSecretPath(p)
   const safeRef = (r: unknown) => typeof r === 'string' && /^[A-Za-z0-9._\/~^-]{1,80}$/.test(r) && !r.startsWith('-')
   if (op === 'log') {
     if (target !== undefined && !safePath(target)) return { error: 'invalid path' }
@@ -312,13 +533,31 @@ export function gitArgv(op: unknown, target: unknown, ref: unknown): { argv: str
   if (op === 'show') {
     if (!safeRef(ref)) return { error: 'invalid ref' }
     if (target !== undefined && !safePath(target)) return { error: 'invalid path' }
-    return { argv: ['git', 'show', '--no-color', '--stat', '--patch', String(ref), ...(target ? ['--', String(target)] : [])] }
+    // A path can be a directory (or '.'), so the secret files are left out of its patch too.
+    // Peeled to a commit: `git show <blob id>` would print a file whole, past the exclusions.
+    return { argv: ['git', 'show', '--no-color', '--no-ext-diff', '--no-textconv', '--stat', '--patch', `${String(ref)}^{commit}`, '--', target ? String(target) : '.', ...SHOW_EXCLUDES] }
   }
   if (op === 'blame') {
     if (!safePath(target)) return { error: 'invalid path' }
     return { argv: ['git', 'blame', '--no-color', '-w', '--', String(target)] }
   }
   return { error: 'op must be log, show or blame' }
+}
+
+/** Files a snapshot names: the diff's, then the untracked ones it does not already have; the diff is read once. */
+export function snapshotFiles(diff: string, untracked: readonly string[]): string[] {
+  const seen = new Set(diffFiles(diff))
+  const out = [...seen]
+  for (const f of untracked) if (!seen.has(f)) (seen.add(f), out.push(f))
+  return out
+}
+
+/** Keeps the newest `max` entries of an insertion-ordered map: session bookkeeping must not grow for ever. */
+export function capMap<K, V>(m: Map<K, V>, max: number): void {
+  for (const k of m.keys()) {
+    if (m.size <= max) return
+    m.delete(k)
+  }
 }
 
 // ---- state -------------------------------------------------------------------
