@@ -76,6 +76,8 @@ Optional assistance with read-only next steps.
 
 <sub>Shown in Balanced mode. Other modes can change the lead and advisor. [Explore model modes](mod/nexus/docs/dashboard.md#model-modes-in-detail).</sub>
 
+**NEXUS Council:** the Opus advisor can call in read-only **Security**, **Architecture** or **Performance** reviewers at a review checkpoint. Adaptive (default) runs the one it picks, On runs all three, and Off keeps the single advisor. [How it works](mod/nexus/docs/council-and-tool-routing.md)
+
 <div align="center">
 
 <img src="mod/nexus/docs/screenshots/nexus-dashboard.png" alt="NEXUS terminal dashboard" width="100%">
@@ -101,6 +103,7 @@ Optional assistance with read-only next steps.
 - [Dashboard, agents & model modes](mod/nexus/docs/dashboard.md)
 - [Commands, shortcuts & inspection](mod/nexus/docs/dashboard.md#every-command)
 - [Telemetry & cost estimates](mod/nexus/docs/telemetry.md)
+- [NEXUS Council & reviewer tool routing](mod/nexus/docs/council-and-tool-routing.md)
 - [Jev routing](mod/nexus/docs/jev.md)
 - [Cache Guard](mod/nexus/docs/cache-guard.md)
 - [Compatibility](mod/nexus/docs/compatibility.md)

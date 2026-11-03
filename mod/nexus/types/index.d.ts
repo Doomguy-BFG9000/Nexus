@@ -146,7 +146,7 @@ export type Mode = {
 }
 
 export type Fx = {
-  kind: 'advisor' | 'spawn' | 'done' | 'jev' | 'mode' | 'route' | 'beat'
+  kind: 'advisor' | 'spawn' | 'done' | 'jev' | 'mode' | 'route' | 'beat' | 'council-out' | 'council-back' | 'council-fail'
   at: number
   ms: number
   /** The agent id, Jev question, ... the effect belongs to. */
@@ -155,14 +155,14 @@ export type Fx = {
 
 export type LogRow = {
   at: number
-  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'haiku' | 'mode'
+  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'haiku' | 'mode' | 'council'
   kind: 'start' | 'done' | 'error' | 'advisor' | 'mode' | 'jev' | 'info'
   text: string
   detail: string
 }
 
 export type Prefs = {
-  version: 2
+  version: 3
   /** auto picks by pane width; full falls back when the pane is too narrow. */
   layout: 'auto' | 'full' | 'compact' | 'minimal'
   /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
@@ -190,6 +190,8 @@ export type Prefs = {
     /** Arm without TTL evidence: the person states their cache lasts an hour. */
     trustTtl: boolean
   }
+  /** NEXUS Council: off keeps the single advisor; adaptive lets the advisor pick one specialist; on runs all three. */
+  council: { activation: 'off' | 'adaptive' | 'on' }
 }
 
 export type ModelRow = Tokens & { requests: number; leadRequests: number; agentRequests: number }
@@ -225,6 +227,87 @@ export type Guard = {
   errors: string[]
 }
 
+export type CouncilRole = 'security' | 'architecture' | 'performance'
+
+export type ReviewerStatus = 'idle' | 'queued' | 'running' | 'done' | 'incomplete' | 'failed' | 'stale'
+
+/** One specialist's latest review: every field from its own spawn, tool calls and turn.complete. */
+export type Reviewer = {
+  role: CouncilRole
+  status: ReviewerStatus
+  agentId: string | null
+  startedAt: number | null
+  endedAt: number | null
+  /** Its latest tool call, as `Read views.tsx`. */
+  activity: string | null
+  tools: number
+  /** Summed from its own requests (turn.step usage). */
+  tokens: Tokens
+  /** Findings it returned that parsed; null until it answers or when its answer did not parse. */
+  findings: number | null
+  /** Why it is incomplete, failed or stale. */
+  reason: string | null
+  /** The advisor's reason, relayed by the lead (adaptive), or 'full council' (on). */
+  rationale: string | null
+}
+
+export type Finding = {
+  role: CouncilRole
+  /** Other specialists that reported the same issue. */
+  alsoBy: CouncilRole[]
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
+  file: string | null
+  line: number | null
+  title: string
+  evidence: string
+  action: string
+  confidence: number | null
+  /** ok: the file and line exist in the working tree; else why not. */
+  ref: 'ok' | 'no-ref' | 'missing-file' | 'line-out-of-range' | 'secret-path'
+}
+
+export type Checkpoint = {
+  id: number
+  at: number
+  activation: 'adaptive' | 'on'
+  /** What the lead relayed from the advisor (adaptive) or 'all' (on). */
+  selection: CouncilRole | 'none' | 'all'
+  rationale: string | null
+  /** Whether an advisor consultation was seen this turn before the call (NEXUS cannot read its text). */
+  advisorSeen: boolean
+  hash: string
+  files: string[]
+  isTruncated: boolean
+  status: 'running' | 'done' | 'partial' | 'skipped' | 'refused'
+  reason: string | null
+  findings: Finding[]
+  isStale: boolean
+  endedAt: number | null
+}
+
+/** One request for a capability beyond a reviewer's starting tools, and the router's answer. */
+export type Grant = {
+  at: number
+  role: CouncilRole | null
+  agentId: string | null
+  capability: string
+  decision: 'grant' | 'deny'
+  /** Which deterministic rule decided. */
+  rule: string
+}
+
+export type Council = {
+  reviewers: Record<CouncilRole, Reviewer>
+  checkpoint: Checkpoint | null
+  /** Snapshot hashes already reviewed this session: the same diff is not reviewed twice. */
+  reviewed: string[]
+  /** Capabilities granted per reviewer agent, for this run only. */
+  granted: Record<string, string[]>
+  ledger: Grant[]
+  reviews: number
+  launches: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'nexus': {
@@ -240,6 +323,7 @@ declare module 'claude-code' {
       log: Shaped<LogRow[]>
       mode: Shaped<Mode>
       fx: Shaped<Fx[]>
+      council: Shaped<Council>
       reduceMotion: boolean
       tick: number
     }

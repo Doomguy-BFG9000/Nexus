@@ -103,7 +103,7 @@ test('/nexus doctor checks the install without showing secrets', async ($, on) =
   await start($)
   const out = (await run($, 'nexus', 'doctor')).text!
   expect(out).toMatch(/^NEXUS doctor/)
-  expect(out).toMatch(/✓ Claude Code 2\.1\.316 · NEXUS 0\.6\.0/)
+  expect(out).toMatch(/✓ Claude Code 2\.1\.316 · NEXUS 0\.7\.0/)
   expect(out).toMatch(/✓ fullscreen TUI: the pane can dock/)
   expect(out).toMatch(/✓ dashboard pane is open/)
   expect(out).toMatch(/! agent definitions: search found, grep missing, audit missing/)

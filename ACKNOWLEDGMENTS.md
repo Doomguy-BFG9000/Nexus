@@ -22,8 +22,14 @@ This acknowledgment does not imply that the Cachebeat author endorses NEXUS.
 
 Cachebeat runs as a skill with a background `Stop` hook (`asyncRewake`) that wakes the main model. Each beat is a real turn answered with ".". NEXUS uses a model fork instead, so beats don't enter the transcript and never pass through Swarm's own model-routing, escalation, Jev or advisor hooks.
 
-## Council and tool-routing design influences
+## NEXUS Council and tool routing
 
-The proposed [NEXUS Council](mod/nexus/docs/council-and-tool-routing.md) takes inspiration from [Andrej Karpathy's LLM Council](https://github.com/karpathy/llm-council), particularly independent model reviews and synthesis. NEXUS proposes its own Security, Architecture and Performance code-review specialists and Off / Adaptive / On activation. **No LLM Council code has been copied.** The upstream repository's reuse terms must be checked before porting code.
+[NEXUS Council](mod/nexus/docs/council-and-tool-routing.md) is inspired by [Andrej Karpathy's LLM Council](https://github.com/karpathy/llm-council): independent model reviews, then a synthesis. NEXUS adapts the idea to software-engineering review inside Claude Code. It uses its own Security, Architecture and Performance reviewers, Off / Adaptive / On activation with the advisor choosing in Adaptive, a gated, read-only launch, and a merge with no extra chairman model. **No LLM Council code is used.** Its licence would be checked before any code was ported.
 
-Dr. [Tian Tian](https://www.ualberta.ca/en/engineering/faculty-staff/academic-staff/tian-tian.html) contributed ideas in discussions about minimal initial agent tools, dynamic tool/model routing, small fine-tuned decision models, and longer-running autonomous metadynamics workflows. He also shared the [pi-pocket](https://github.com/alchem0x2A/pi-pocket) harness as a reference. These discussions informed the proposed tool-routing research direction; they do not imply his endorsement of NEXUS or that these features are implemented.
+Dr. [Tian Tian](https://www.ualberta.ca/en/engineering/faculty-staff/academic-staff/tian-tian.html) suggested several ideas in research discussions:
+- minimal initial agent toolsets;
+- dynamic tool and model routing;
+- small fine-tuned decision models;
+- longer-running autonomous metadynamics workflows.
+
+He also shared the [pi-pocket](https://github.com/alchem0x2A/pi-pocket) harness as a reference. These ideas shaped Council's least-privilege reviewer tools, the deterministic router and its narrow-only extension point for a future decision model. This doesn't imply his endorsement of NEXUS, and no scientific workflow is part of NEXUS.

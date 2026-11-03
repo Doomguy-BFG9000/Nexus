@@ -1,4 +1,5 @@
-import type { Advisor, Fx, Guard, Jev, JevDecision, Lead, LogRow, Mode, NexusAgent, Usage, View } from '../types'
+import type { Advisor, Council, CouncilRole, Fx, Guard, Jev, JevDecision, Lead, LogRow, Mode, NexusAgent, Reviewer, Usage, View } from '../types'
+import { ON_WARNING, ROLES, ROLE_LABEL, councilTokens } from './council'
 import { C, SPIN, bar, clock, compact, elapsed, modelLabel, pad, role } from './format'
 import { stateLabel, tokensLabel, turnsLabel } from './inspect'
 import { JEV } from './jev'
@@ -40,6 +41,7 @@ export type Snapshot = {
   usage: Usage
   models: Record<string, ModelRow>
   guard: Guard
+  council: Council
   /** A width the person set by hand, which Claude Code keeps over any request. */
   keptWidth?: number | null
   now: number
@@ -59,6 +61,7 @@ const WHO_COLOR: Record<LogRow['who'], string> = {
   audit: C.blue,
   haiku: C.blue,
   mode: C.amber,
+  council: C.purple,
 }
 const ICON: Record<LogRow['kind'], string> = {
   start: '▸',
@@ -96,6 +99,7 @@ export function isAnimating(s: Snapshot): boolean {
   return (
     isWorking(s) ||
     s.agents.some(a => a.status === 'running') ||
+    ROLES.some(r => s.council.reviewers[r].status === 'running') ||
     s.fx.some(f => s.now - f.at < f.ms) ||
     s.log.some(r => s.now - r.at < FRESH_MS)
   )
@@ -347,6 +351,159 @@ function AdvisorColumn({ el, s }: { el: El; s: Snapshot }) {
   )
 }
 
+
+// ---- NEXUS Council: the advisor's column, split into three reviewers -------
+const COUNCIL_SHORT: Record<CouncilRole, string> = { security: 'SEC', architecture: 'ARC', performance: 'PERF' }
+
+/** A reviewer's status word and its colour: only what its own lifecycle said. */
+function reviewerState(s: Snapshot, r: Reviewer): { text: string; color: string } {
+  if (r.status === 'running') return { text: `${spin(s)} ${r.startedAt === null ? '' : elapsed(s.now - r.startedAt)}`.trim(), color: C.purpleHi }
+  if (r.status === 'queued') return { text: '◌ authorized', color: C.purple }
+  if (r.status === 'done') return { text: '✓ done', color: C.green }
+  if (r.status === 'stale') return { text: '◌ stale', color: C.amber }
+  if (r.status === 'incomplete') return { text: '◌ INCOMPLETE', color: C.amber }
+  if (r.status === 'failed') return { text: '✗ failed', color: C.red }
+  return { text: 'idle', color: C.dim }
+}
+
+/** The reviewer's line to the lead: out on launch, held while it works, back with its findings, red on a failure. */
+function CouncilLink({ el, s, r, width }: { el: El; s: Snapshot; r: Reviewer; width: number }) {
+  const { Text } = el
+  const out = phase(s, 'council-out', r.role)
+  const back = phase(s, 'council-back', r.role)
+  const fail = phase(s, 'council-fail', r.role)
+  const track = Math.max(4, width - 7)
+  let dots: number[] = []
+  let color: string = C.purpleHi
+  if (out !== null) dots = s.reduceMotion ? [0] : [1 - out]
+  else if (back !== null) {
+    dots = s.reduceMotion ? [1] : [back]
+    color = C.greenHi
+  } else if (r.status === 'running') dots = s.reduceMotion ? [0.5] : [(Math.floor(s.now / 180) % track) / Math.max(1, track - 1)]
+  if (fail !== null) {
+    return (
+      <Text>
+        <Text color={C.red}>✗ </Text>
+        <Text color={C.red}>{'·'.repeat(track)}</Text>
+        <Text color={C.dim}> lead</Text>
+      </Text>
+    )
+  }
+  const isLive = dots.length > 0
+  return (
+    <Text>
+      <Text color={isLive ? C.purple : C.dim}>◂ </Text>
+      <Track el={el} width={track} dots={dots} color={color} />
+      <Text color={isLive ? C.orange : C.dim}> lead</Text>
+    </Text>
+  )
+}
+
+function ReviewerBox({ el, s, r }: { el: El; s: Snapshot; r: Reviewer }) {
+  const { Box, Text } = el
+  const inner = ADVISOR_W - 4
+  const st = reviewerState(s, r)
+  const isActive = r.status === 'running' || phase(s, 'council-back', r.role) !== null || phase(s, 'council-out', r.role) !== null
+  const t = r.tokens
+  const used = t.input + t.cacheRead + t.cacheWrite + t.output
+  const detail =
+    r.status === 'running'
+      ? r.activity ?? 'reviewing'
+      : r.reason ?? (r.status === 'idle' ? (s.prefs.council.activation === 'adaptive' ? 'not selected' : 'awaiting checkpoint') : r.rationale ?? '')
+  const numbers =
+    r.status === 'idle'
+      ? 'opus · read-only'
+      : `tok ${used === 0 ? 'N/A' : compact(used)}${r.findings === null ? '' : ` · ${r.findings} found`}`  // no usage reported: N/A, never 0
+  return (
+    <Box flexDirection="column" width={ADVISOR_W} borderStyle={isActive ? 'double' : 'single'} borderColor={r.status === 'idle' ? '#3a3b4a' : isActive ? C.purpleHi : C.purple} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text bold color={r.status === 'idle' ? C.dim : C.purple}>{ROLE_LABEL[r.role]}</Text>
+        <Text color={st.color}>{fit(st.text, inner - ROLE_LABEL[r.role].length - 1)}</Text>
+      </Box>
+      <Text color={r.status === 'idle' ? '#3a3b4a' : C.fg}>{fit(detail || ' ', inner)}</Text>
+      <Text color={C.dim}>{fit(numbers, inner)}</Text>
+      <CouncilLink el={el} s={s} r={r} width={inner} />
+    </Box>
+  )
+}
+
+/** Council on or adaptive: the advisor stays on top as the controller, the three reviewers beneath it. */
+function CouncilColumn({ el, s }: { el: El; s: Snapshot }) {
+  const { Box, Text } = el
+  const a = s.advisor
+  const p = phase(s, 'advisor')
+  const isOff = !s.mode.sessionAdvisor
+  const inner = ADVISOR_W - 4
+  const c = s.council
+  const activation = s.prefs.council.activation
+  const cp = c.checkpoint
+  const t = councilTokens(c)
+  const total = t.input + t.cacheRead + t.cacheWrite + t.output
+  return (
+    <Box flexDirection="column" width={ADVISOR_W} alignSelf="flex-start">
+      <Box flexDirection="column" width={ADVISOR_W} borderStyle={p === null ? 'single' : 'double'} borderColor={isLit(s, p) ? C.purpleHi : C.purple} paddingX={1}>
+        <Box justifyContent="space-between">
+          <Text bold color={p === null ? C.purple : C.purpleHi}>{advisorLabel(s).toUpperCase()}</Text>
+          <Text color={C.purple}>{isOff ? '○ off' : p === null ? '◇ on call' : '◆ reported'}</Text>
+        </Box>
+        <Box justifyContent="center">
+          {isOff ? (
+            <Text color={C.dim}>no advisor this session</Text>
+          ) : a.lastAt === null ? (
+            <Text color={C.dim}>Awaiting consultation.</Text>
+          ) : p !== null ? (
+            <Text backgroundColor={C.purpleBg} color={C.purpleHi} bold> reported just now </Text>
+          ) : (
+            <Text color={C.fg}>last {elapsed(s.now - a.lastAt)} ago</Text>
+          )}
+        </Box>
+        <Text color={C.dim}>{fit(`calls ${a.calls} · ${a.lastMs === null ? '—' : elapsed(a.lastMs)} · ctx ${a.contextAtCall === null ? '—' : compact(a.contextAtCall)}`, inner)}</Text>
+        <Text color="#3a3b4a">{'─'.repeat(inner)}</Text>
+        <Text>
+          <Text color={C.dim}>council </Text>
+          <Text bold color={activation === 'on' ? C.amber : C.purple}>{activation === 'on' ? 'ON · all three' : 'ADAPTIVE · ≤1'}</Text>
+        </Text>
+        {activation === 'on' && <Text color={C.amber}>{ON_WARNING}</Text>}
+        <Text color={C.dim}>
+          {fit(
+            cp === null
+              ? 'no checkpoint yet'
+              : `#${cp.id} ${cp.status}${cp.selection === 'all' || cp.selection === 'none' ? '' : ` · ${cp.selection}`}${cp.isStale ? ' · stale' : ''}`,
+            inner,
+          )}
+        </Text>
+        <Text color={C.dim}>{fit(`tok ${total > 0 ? compact(total) : 'N/A'} · cost N/A`, inner)}</Text>
+      </Box>
+      {ROLES.map(r => (
+        <ReviewerBox el={el} s={s} r={c.reviewers[r]} />
+      ))}
+    </Box>
+  )
+}
+
+/** One line for compact and list layouts: each reviewer's state. */
+function CouncilStrip({ el, s }: { el: El; s: Snapshot }) {
+  const { Text } = el
+  const activation = s.prefs.council.activation
+  return (
+    <Text>
+      <Text color={C.dim}>council </Text>
+      <Text color={activation === 'on' ? C.amber : C.purple}>{activation}</Text>
+      {ROLES.map(role => {
+        const r = s.council.reviewers[role]
+        const st = reviewerState(s, r)
+        return (
+          <Text>
+            <Text color={C.dim}> · </Text>
+            <Text color={r.status === 'idle' ? C.dim : C.purple}>{COUNCIL_SHORT[role]} </Text>
+            <Text color={st.color}>{r.status === 'idle' ? '○' : st.text}</Text>
+          </Text>
+        )
+      })}
+    </Text>
+  )
+}
+
 /** The lead's link to the advisor: a pulse out to it and back when it is consulted. */
 function AdvisorLink({ el, s, width }: { el: El; s: Snapshot; width: number }) {
   const { Box, Text } = el
@@ -357,6 +514,15 @@ function AdvisorLink({ el, s, width }: { el: El; s: Snapshot; width: number }) {
     // Out to the advisor (right to left) in the first half, back in the second.
     const x = p < 0.5 ? 1 - p * 2 : (p - 0.5) * 2
     dots = s.reduceMotion ? [0, 1] : [x]
+  }
+  // Council traffic rides the same line: each reviewer launched (out) or answering (back).
+  if (s.prefs.council.activation !== 'off') {
+    for (const r of ROLES) {
+      const out = phase(s, 'council-out', r)
+      const back = phase(s, 'council-back', r)
+      if (out !== null) dots.push(s.reduceMotion ? 0 : 1 - out)
+      if (back !== null) dots.push(s.reduceMotion ? 1 : back)
+    }
   }
   return (
     <Box width={width}>
@@ -690,6 +856,7 @@ export function SettingsView({ el, s, act, width }: { el: El; s: Snapshot; act: 
   return (
     <Box flexDirection="column" width={width} borderStyle="single" borderColor={C.dim} paddingX={1}>
       <Text bold color={C.fg}>settings <Text color={C.dim}>· plugin store only; Claude Code settings untouched</Text></Text>
+      {s.prefs.council.activation === 'on' && <Text color={C.amber}>{ON_WARNING}</Text>}
       <Text> </Text>
       {SETTINGS.filter(spec => spec.options).map(spec =>
         Select && act.isFocused ? (
@@ -837,7 +1004,7 @@ export function PaneFull({ el, s, width, act }: { el: El; s: Snapshot; width: nu
       <Header el={el} s={s} width={width} act={act} />
       <Box gap={2} marginTop={1}>
         <Box flexDirection="column" justifyContent="space-between" width={ADVISOR_W}>
-          <AdvisorColumn el={el} s={s} />
+          {s.prefs.council.activation === 'off' ? <AdvisorColumn el={el} s={s} /> : <CouncilColumn el={el} s={s} />}
           <ModelLegend el={el} s={s} width={ADVISOR_W} />
         </Box>
         {s.view.kind === 'agent' ? (
@@ -881,6 +1048,12 @@ export function PaneCompact({ el, s, width, act }: { el: El; s: Snapshot; width:
           )}
         </Text>
       </Box>
+      {s.prefs.council.activation !== 'off' && (
+        <Box flexDirection="column" paddingX={1}>
+          <CouncilStrip el={el} s={s} />
+          {s.prefs.council.activation === 'on' && <Text color={C.amber}>{ON_WARNING}</Text>}
+        </Box>
+      )}
       <LeadBox el={el} s={s} />
       {s.prefs.jev === 'bars' && <JevBox el={el} s={s} width={width} />}
       {s.prefs.jev === 'line' && <JevLine el={el} s={s} />}
@@ -909,6 +1082,7 @@ export function PaneList({ el, s }: { el: El; s: Snapshot }) {
         <Text color={C.green}>■ jev {s.jev.status === 'on' ? s.jev.decisions : s.jev.status}</Text>
         <Text color={C.amber}> ◈ {modeName(s)}</Text>
       </Text>
+      {s.prefs.council.activation !== 'off' && <CouncilStrip el={el} s={s} />}
       {pickAgents(s.agents).map(a => (
         <Text>
           <Text color={a.isNexus ? C.blue : C.dim}>{a.status === 'running' ? spin(s) : a.status === 'done' ? '✓' : a.status === 'failed' ? '✗' : '◌'} {pad(a.label, 10)}</Text>

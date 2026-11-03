@@ -10,7 +10,7 @@ export type { Prefs }
 export const PANE_MAX = 999
 
 export const DEFAULT_PREFS: Prefs = {
-  version: 2,
+  version: 3,
   layout: 'auto',
   animation: 'auto',
   agentDetail: 'full',
@@ -21,6 +21,7 @@ export const DEFAULT_PREFS: Prefs = {
   jev: 'bars',
   escalation: 'ask',
   cacheGuard: { enabled: false, idleMin: 50, maxHours: 8, maxBeats: 10, budgetUsd: 0.5, trustTtl: false },
+  council: { activation: 'adaptive' },
 }
 
 const pick = <T extends string>(value: unknown, options: readonly T[], fallback: T): T =>
@@ -35,8 +36,9 @@ export function migrate(raw: unknown): Prefs {
   const d = DEFAULT_PREFS
   const t = (r.telemetry ?? {}) as Record<string, unknown>
   const c = (r.cacheGuard ?? {}) as Record<string, unknown>
+  const k = (r.council ?? {}) as Record<string, unknown>
   return {
-    version: 2,
+    version: 3,
     layout: pick(r.layout, ['auto', 'full', 'compact', 'minimal'], d.layout),
     animation: pick(r.animation, ['auto', 'full', 'reduced', 'off'], d.animation),
     agentDetail: pick(r.agentDetail, ['brief', 'full'], d.agentDetail),
@@ -49,8 +51,8 @@ export function migrate(raw: unknown): Prefs {
       tokens: bool(t.tokens, d.telemetry.tokens),
     },
     logRows: Math.round(num(r.logRows, 0, 6, d.logRows)),
-    // v2: the pane opens as wide as Claude Code allows unless a width was chosen since.
-    paneColumns: r.version === 2 ? Math.round(num(r.paneColumns, 40, PANE_MAX, d.paneColumns)) : PANE_MAX,
+    // From v2 on, a chosen width is kept; before it, the pane opens as wide as Claude Code allows.
+    paneColumns: typeof r.version === 'number' && r.version >= 2 ? Math.round(num(r.paneColumns, 40, PANE_MAX, d.paneColumns)) : PANE_MAX,
     jev: pick(r.jev, ['bars', 'line', 'hidden'], d.jev),
     escalation: pick(r.escalation, ['ask', 'off'], d.escalation),
     cacheGuard: {
@@ -61,6 +63,8 @@ export function migrate(raw: unknown): Prefs {
       budgetUsd: num(c.budgetUsd, 0, 20, d.cacheGuard.budgetUsd),
       trustTtl: bool(c.trustTtl, d.cacheGuard.trustTtl),
     },
+    // New in v3: earlier preferences get the default (adaptive); a stored choice is kept.
+    council: { activation: pick(k.activation, ['off', 'adaptive', 'on'], d.council.activation) },
   }
 }
 
@@ -84,6 +88,7 @@ export const SETTINGS: { key: string; options?: string[]; range?: [number, numbe
   { key: 'cacheGuard.maxBeats', range: [1, 50], help: 'beats per session' },
   { key: 'cacheGuard.budgetUsd', range: [0, 20], help: 'API est. budget per session' },
   { key: 'cacheGuard.trustTtl', options: ['on', 'off'], help: 'arm without 1h TTL evidence' },
+  { key: 'council.activation', options: ['adaptive', 'on', 'off'], help: 'Opus Council: advisor picks one / all three / single advisor' },
 ]
 
 export type SetResult = { ok: true; prefs: Prefs } | { ok: false; why: string }

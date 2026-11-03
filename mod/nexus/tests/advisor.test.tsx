@@ -3,8 +3,9 @@ import { expect, mock, test } from 'claude-code/testing'
 
 const pane = { plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused: false, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 46 }, view: {} } } as const
 
-function engine(on: On, advisor: () => string | null) {
+function engine(on: On, advisor: () => string | null, stored: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 2_000_000 })
+  mock.store(on, stored)
   mock.env(on, { HOME: '/home/test' })
   on('settings.read', () => ({ value: { advisorModel: advisor() } }))
   on('session.id', () => ({ value: 's' }))
@@ -51,8 +52,8 @@ test('no consultation yet: the empty state, and none of the old explanations', a
   for (const gone of [/before a plan/, /reads the whole/, /silent on every/, /never writes/, /before done/]) expect(all).not.toMatch(gone)
 })
 
-test('consultations are counted with duration, context and a short history; cost stays N/A', async ($, on) => {
-  const clock = engine(on, () => 'opus')
+test('council off: the original panel counts consultations with duration, context and a short history; cost stays N/A', async ($, on) => {
+  const clock = engine(on, () => 'opus', { prefs: { version: 3, council: { activation: 'off' } } })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   for (let i = 0; i < 3; i++) await step($, i)
   await clock.advance(65_000)
@@ -82,4 +83,17 @@ test('no advisor configured: says so', async ($, on) => {
   const all = await text($)
   expect(all).toMatch(/○ off/)
   expect(all).toMatch(/no advisor this session/)
+})
+
+test('council adaptive (default): the controller header keeps the advisor\'s calls, duration and context; cost N/A', async ($, on) => {
+  const clock = engine(on, () => 'opus')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  for (let i = 0; i < 3; i++) await step($, i)
+  await clock.advance(65_000)
+  const all = await text($)
+  expect(all).toMatch(/calls 3 · 4s · ctx 41k/)
+  expect(all).toMatch(/council\s*\n?ADAPTIVE/)
+  expect(all).toMatch(/cost N\/A/)
+  for (const role of ['SECURITY', 'ARCHITECTURE', 'PERFORMANCE']) expect(all).toContain(role)
+  expect(all).not.toMatch(/◆ reported|reported just now/)
 })

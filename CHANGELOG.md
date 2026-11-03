@@ -1,5 +1,20 @@
 # Changelog (NEXUS)
 
+## 0.7.0 (2026-11-02): NEXUS Council and reviewer tool routing
+- **NEXUS Council:** read-only Opus Security, Architecture and Performance reviewers at a review checkpoint (`mcp__nexus__council_review`). The setting is `council.activation`, saved in the plugin store:
+  - Adaptive (the default): the advisor picks at most one;
+  - On: all three, concurrently, with a yellow token warning;
+  - Off: the single advisor, unchanged.
+- **How a checkpoint runs:** NEXUS authorizes, then the lead launches the reviewers with its own Agent tool. NEXUS gates each launch, gives every reviewer the same fixed git snapshot, checks file and line references, merges duplicates, redacts emails and tokens, marks stale or incomplete runs, and returns the verdict to the lead.
+- **Reviewer tool routing:** reviewers start with Read, Grep and Glob. Writes, shell, network and agents are withheld by the agent definition and refused again by a hook that fails closed, which also blocks secret paths. `git_read` (fixed argv, no shell) is granted on request by a deterministic router, and every request is logged (`/nexus council ledger`).
+- **Dashboard:** the left Opus panel splits into the three reviewers, each with an event-driven link to the lead. Compact and list layouts show a one-line strip.
+- **Commands:** `/nexus council [adaptive|on|off|status|findings|ledger]`.
+- **Background reviewers:** when Claude Code runs reviewers in the background (interactive sessions), their hand-back reports are allowed and read. Each checked result, and the merged verdict, arrive with the reviewer's report (its hand-back message or completion notification). An advisor call in the same response as `council_review` is now seen. A reviewer stopped from the task list, or a plugin reload mid-review, is reported INCOMPLETE; the checkpoint never stays running.
+- **Benchmark** against the single advisor, in the Council guide: on three small tasks, Off found 14 of 15 planted issues, Adaptive and On 15, with no false positives, at about +35% and +97% API-priced cost.
+- **Preferences:** stored preferences move to v3 and keep every earlier value. Saved pane widths from v2 are kept (0.6.0 also read v2 only).
+- **Privacy:** NEXUS redacts its own verdict, dashboard and log. Reviewers' raw reports, delivered to the lead by Claude Code, aren't redacted, and secret blocking covers named paths only. See the Privacy section of the Council guide.
+- **Credits:** Karpathy's LLM Council and Dr. Tian Tian's routing ideas are acknowledged (no code reused).
+
 ## 0.6.0 (2026-11-02): NEXUS everywhere
 - The plugin is now `nexus` and its marketplace `muhzain05`: `claude plugin marketplace add muhzain05/Nexus`, then `claude plugin install nexus@muhzain05 --scope user`. If you installed `swarm-ui@claude-swarm`, uninstall it and install `nexus@muhzain05`; preferences start fresh.
 - The deprecated `/swarm`, `/swarm-mode` and `/swarm-jev` aliases are removed. Use `/nexus`, `/nexus-mode` and `/nexus-jev`.
