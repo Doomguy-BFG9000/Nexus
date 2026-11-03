@@ -29,7 +29,7 @@ NEXUS never switches between these for you.
 1. The lead changes code, consults the advisor, and calls `mcp__nexus__council_review` with a one-line summary (and in Adaptive, the advisor's pick and reason).
 2. NEXUS checks the call:
    - Adaptive requires an advisor consultation earlier in the same turn. If the lead calls the tool in the same response as the advisor, NEXUS waits (up to 5 s) for that response to end, since the API reports the advisor only then.
-   - It captures a fixed snapshot: `git diff HEAD`, plus the names of untracked files, minus secret-looking ones.
+   - It captures a fixed snapshot: `git diff HEAD` without secret-looking files, plus the names of untracked files (minus secret-looking ones). The hash also covers the secret files' own changes and the content of every untracked file, so editing either makes a new snapshot.
    - It refuses an empty diff, a diff already reviewed this session, a second checkpoint while one is running, or a call from any subagent.
 3. It **authorizes** exactly the reviewers the mode allows and tells the lead to launch them with its own Agent tool, in one message, in the foreground. An interactive session may still run them in the background (Claude Code decides); both paths are handled.
 4. NEXUS's `agent.spawn` hook is the gate:
@@ -58,7 +58,7 @@ Reviewers start with the smallest useful toolset, and more is granted only by fi
    - `mcp__nexus__git_read` is listed but refused until granted.
    - Write, Edit, Bash, web and agent tools are withheld outright.
 2. **A `tool.call` hook**, a second layer that fails closed:
-   - It refuses anything outside that set, any read of a secret-looking path (`.env*`, keys, certificates, credentials), and `git_read` before a grant.
+   - It refuses anything outside that set, any read of a secret-looking path (`.env*`, keys, certificates, credentials), any path that, with symlinks followed, lands outside the session's directories, a Grep `glob` that could select a secret file (a glob overrides `.gitignore`), and `git_read` before a grant. This check is NEXUS's own; Claude Code's permission rules are separate and are not consulted.
    - If the hook itself errors, the reviewer's call is refused.
 3. **The router:**
    - A request for `git_read` is granted. That tool runs fixed `git log` / `show` / `blame` commands with checked paths and refs, and no shell.
@@ -125,7 +125,7 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
 
 ## Verification
 
-**Automated** (`claude plugin test mod/nexus`): 163 tests. The 39 Council tests are mocked engine events, not live runs. They cover:
+**Automated** (`claude plugin test mod/nexus`): 201 tests. The Council tests are mocked engine events, not live runs. They cover:
 - mode transitions and the Adaptive default;
 - the advisor's pick, none, an unreadable pick, a missing advisor, and an advisor call in the same response;
 - On launching all three;
@@ -136,6 +136,7 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
 - authorized but never launched;
 - path normalisation and redaction;
 - enforcement (writes, shell, secrets, ungranted git, grant then use) and the ledger;
+- audit regressions: repository confinement, symlinks, secret globs, finding-text sanitising, untracked-content hashing, a throwing launch, session-only env overrides, an unreadable settings store;
 - missing telemetry;
 - preference migration (v2 to v3 keeps widths);
 - full, compact, list and reduced-motion drawing.
@@ -187,9 +188,12 @@ Findings that point at a secret-looking path have their evidence withheld. This 
 - In a live test, a reviewer quoted an email address from an untracked debug log. NEXUS's verdict redacted it, but the raw report shown to the lead did not.
 
 **What reviewers can read:**
-- Secret blocking checks the **path a tool names**: `.env*`, keys, certificates, `credentials*`, `secrets/`, `.netrc`, `.npmrc` and `.pypirc`.
-- A Grep or Glob over a whole directory isn't filtered file by file, so it can match or list files inside it.
+- Secret blocking checks the **path a tool names**, and where it leads once symlinks are followed: `.env*`, `.envrc`, keys, certificates, `credentials*`, `secrets/`, `.netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `.aws/`, `.ssh/`, `.gnupg/`, `.kube/`, `.docker/config.json` and `.git/config`.
+- Reviewers read **inside the repository under review only**. An absolute path elsewhere, `..` out of the repository and `~` are refused. A Grep or Glob with no path is refused when the session's directory has moved outside that repository, and a Glob `pattern` may not be absolute or climb out with `..`. The check resolves the path, then the tool opens it: a file swapped for a symlink in between (by something else running on the machine; reviewers can't write) isn't caught.
+- A Grep or Glob over a whole directory isn't filtered file by file, so it can match or list files inside it. Grep honours `.gitignore` (probed: a gitignored `.env` is not searched unless a `glob` names it; a `glob` that could name a secret is refused, and a `glob` holding several globs, as `*.ts .env` or `*.ts,.env`, is checked glob by glob). Because no check on a glob's spelling is complete (`*.ts` matches a gitignored `.env.ts`), NEXUS also appends negations for every secret class to each reviewer Grep, which ripgrep applies last, but a secret that is **not** gitignored and not hidden is searchable. `git_read` refuses wildcard paths, and `show` leaves common secret files out of the patch with or without a path; a committed secret under an unusual name is not. Outside a git repository, with no checkpoint open, reviewer reads are refused.
 - Other files a reviewer can Read (logs, fixtures, dumps) aren't treated as secrets.
+- A changed tracked secret file is left out of the diff reviewers get; they're told how many were left out.
+- A repository inside a secret-looking folder (for example `~/secrets/app`) refuses every reviewer read. This fails safe.
 - Untracked files are listed to reviewers by name, minus secret-looking ones.
 
 **Recommendation:** don't run a review with sensitive data in the working tree (tracked or untracked) unless you're fine with it reaching the model and the transcript. Treat Council output like any other model output in your session.
@@ -206,7 +210,8 @@ Findings that point at a secret-looking path have their evidence withheld. This 
 - **Same model, not independent proof.** Three Opus reviewers agreeing isn't independent validation; the lead is told to verify.
 - **The reviewer tool is visible in Off mode.** Plugin-registered tools can't be withdrawn, so in Off the council tool replies "Council is off" and launches nothing, and the lead gets no instructions to use it.
 - **Permissions in normal use.** The live runs pre-approved the tools with `--allowedTools`. In a normal session, Claude Code asks the first time the lead calls `council_review` and a reviewer calls `request_capability` or `git_read` (or auto mode decides).
-- **Developer overrides.** `NEXUS_COUNCIL_MODEL` (`haiku` or `sonnet`) and `NEXUS_COUNCIL_ACTIVATION` exist for cheap smoke tests. They apply to that session only and are never saved.
+- **New files that cannot be hashed.** If hashing untracked files' content fails (a timeout on very large files, a file vanishing), the review is not matched against earlier ones, so asking again authorizes reviewers again. It errs toward reviewing (more tokens), never toward a false "already reviewed".
+- **Developer overrides.** `NEXUS_COUNCIL_MODEL` (`haiku` or `sonnet`) and `NEXUS_COUNCIL_ACTIVATION` exist for cheap smoke tests. They apply to that session only and are never saved (choosing a mode with `/nexus council` or `/nexus settings` does save, and ends the override).
 
 ## Attribution
 

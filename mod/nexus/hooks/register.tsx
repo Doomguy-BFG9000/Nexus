@@ -42,24 +42,32 @@ import {
   councilTokens,
   dedupe,
   diffFiles,
+  capMap,
   gitArgv,
+  guardGrepGlob,
   hashText,
   idleReviewer,
   isCouncilType,
   roleOfType,
   isSecretPath,
+  leavesRepo,
   relPath,
   mayCall,
+  normalizePath,
+  snapshotFiles,
   parseFindings,
   parseSelection,
   REPORT_TOOL,
+  SECRET_PATHSPECS,
+  SHOW_EXCLUDES,
+  UNRESOLVED,
   reviewerSystemPrompt,
   reviewerTask,
   reviewersFor,
   route,
   verdictText,
 } from './council'
-import type { Snapshot as ReviewSnapshot } from './council'
+import type { PathCtx, Snapshot as ReviewSnapshot } from './council'
 import { AboutView, HelpView, NEXUS_VERSION, OutputView, aboutText, helpText } from './docs'
 import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
 import type { Prefs } from './prefs'
@@ -472,20 +480,33 @@ async function guardText($: EngineInterface): Promise<string> {
 /** Preferences from the plugin's store, migrated; the first run seeds them from the plugin options. */
 async function loadPrefs($: EngineInterface) {
   let raw: unknown
+  isStoreReadable = true
   try {
     raw = await $.store.get('prefs')
   } catch {
+    // Unreadable is not empty: defaults serve this session, and the saved settings are left alone.
     raw = undefined
+    isStoreReadable = false
   }
   const seeded = raw ?? { escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
   const p = migrate(seeded)
+  storedActivation = p.council.activation
   await update($, prefs, () => p)
-  if (JSON.stringify(raw) !== JSON.stringify(p)) await savePrefs($, p)
+  if (isStoreReadable && JSON.stringify(raw) !== JSON.stringify(p)) await savePrefs($, p)
 }
 
+/** False when the saved settings could not be read at start: nothing is written over them this session. */
+let isStoreReadable = true
+/** The council mode the user saved; a developer env override (NEXUS_COUNCIL_ACTIVATION) is for the session and never replaces it. */
+let storedActivation: Prefs['council']['activation'] = DEFAULT_PREFS.council.activation
+let activationOverride: Prefs['council']['activation'] | null = null
+
 async function savePrefs($: EngineInterface, p: Prefs) {
+  if (!isStoreReadable) return
+  if (!activationOverride) storedActivation = p.council.activation
+  const out = activationOverride ? { ...p, council: { ...p.council, activation: storedActivation } } : p
   try {
-    await $.store.set('prefs', p)
+    await $.store.set('prefs', out)
   } catch {
     // kept for this session; the next start reads the last saved value
   }
@@ -503,8 +524,10 @@ async function settingsCommand($: EngineInterface, args: string): Promise<string
   if (value === undefined) return `${key} is ${prefValue(current, key)}`
   const out = setPref(current, key, value)
   if (!out.ok) return out.why
+  // The user choosing a council mode (even the one the override set) ends the session-only override.
+  if (key === 'council.activation') activationOverride = null
   await applyPrefs($, current, out.prefs)
-  return `${key} → ${prefValue(out.prefs, key)} (saved for later sessions).`
+  return `${key} → ${prefValue(out.prefs, key)} (${isStoreReadable ? 'saved for later sessions' : 'this session only: the saved settings could not be read, so they were left as they are'}).`
 }
 
 /** Saves and applies new preferences: pane open/closed, motion, Cache Guard. */
@@ -936,7 +959,8 @@ async function routeRetry($: EngineInterface, tool: string, failure: string, rer
 
 /** After a read inside the workspace: Jev's pick among its sibling files, attached as an optional note. */
 async function routeHint($: EngineInterface, path: string, base: string, ran: any) {
-  const dir = path.slice(0, path.lastIndexOf('/'))
+  // Normalised first: `/repo/../etc/x` starts with the workspace path but is not inside it.
+  const dir = path.startsWith('/') ? normalizePath(path, cwd).replace(/\/[^/]*$/, '') : ''
   if (!cwd || !dir || (dir !== cwd && !dir.startsWith(`${cwd}/`))) return ran
   let names: string[]
   try {
@@ -1211,28 +1235,80 @@ let checkpointCount = 0
 
 const GIT_OUT_CHARS = 40_000
 
-async function git($: EngineInterface, argv: string[]) {
-  return $.process.run(argv, { cwd, timeoutMs: 20_000 })
+/** The directory the session runs in now (it moves with /cd or a worktree), else where it started. */
+async function liveCwd($: EngineInterface): Promise<string> {
+  try {
+    const dir = await $.session.cwd()
+    if (typeof dir === 'string' && dir) return dir
+  } catch {
+    // an engine that cannot say: where the session started
+  }
+  return cwd
 }
 
-/** The fixed thing reviewed: tracked changes against HEAD, and the names of new untracked files. The index is not touched. */
-async function reviewSnapshot($: EngineInterface): Promise<ReviewSnapshot | { error: string }> {
-  const inside = await git($, ['git', 'rev-parse', '--is-inside-work-tree']).catch(() => null)
+async function git($: EngineInterface, argv: string[], dir: string = cwd, timeoutMs = 20_000) {
+  return $.process.run(argv, { cwd: dir, timeoutMs })
+}
+
+const topLevels = new Map<string, string>()
+/**
+ * The repository's top level, from the session's directory now: `git diff` names files from it, so the
+ * snapshot, the line counts and the reviewers' confinement all start there (the session may sit in a subfolder).
+ */
+async function repoRoot($: EngineInterface, from?: string): Promise<string> {
+  const dir = from ?? (await liveCwd($))
+  return (await repoTop($, dir)) ?? dir
+}
+
+/** The top level of the repository `dir` is in, or null when it is in none (git says so, or cannot be run). */
+async function repoTop($: EngineInterface, dir: string): Promise<string | null> {
+  const known = topLevels.get(dir)
+  if (known) return known
+  const r = await git($, ['git', 'rev-parse', '--show-toplevel'], dir, 5_000).catch(() => null)
+  const top = r?.exitCode === 0 ? r.stdout.trim() : ''
+  if (!top) return null
+  topLevels.set(dir, top)
+  capMap(topLevels, 20)
+  return top
+}
+
+/**
+ * The repository a reviewer is bound to: the open checkpoint's, else the one the session is in. Null when there is
+ * none: then reviewer reads and git_read are refused, never confined to whatever directory the session is in.
+ */
+async function reviewRoot($: EngineInterface, base?: string): Promise<string | null> {
+  return open?.root ?? (await repoTop($, base ?? (await liveCwd($))))
+}
+
+/** The fixed thing reviewed: tracked changes against HEAD, and the names and content of new untracked files. The index is not touched. */
+async function reviewSnapshot($: EngineInterface, dir: string): Promise<ReviewSnapshot | { error: string }> {
+  const inside = await git($, ['git', 'rev-parse', '--is-inside-work-tree'], dir).catch(() => null)
   if (!inside || inside.exitCode !== 0) return { error: 'not a git repository: Council reviews a git diff' }
-  const diff = await git($, ['git', 'diff', 'HEAD', '--no-color', '--no-ext-diff']).catch(() => null)
+  // Secret files are left out of the diff reviewers are given; their own diff is hashed, so changing one is still a new snapshot.
+  const diff = await git($, ['git', 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv', '--', '.', ...SHOW_EXCLUDES], dir).catch(() => null)
   if (!diff || diff.exitCode !== 0) return { error: `git diff failed${diff ? `: ${diff.stderr.trim().slice(0, 160)}` : ''}` }
-  const others = await git($, ['git', 'ls-files', '--others', '--exclude-standard']).catch(() => null)
-  const allUntracked = (others?.exitCode === 0 ? others.stdout.split('\n') : []).map(l => l.trim()).filter(Boolean).slice(0, 200)
-  // Secret-looking files still count for the hash, but are never pointed out to a reviewer.
+  const secret = await git($, ['git', 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv', '--', ...SECRET_PATHSPECS], dir).catch(() => null)
+  if (!secret || secret.exitCode !== 0) return { error: `git diff failed${secret ? `: ${secret.stderr.trim().slice(0, 160)}` : ''}` }
+  // NUL-separated: a name with spaces or non-ASCII characters is listed as it is, not quoted.
+  const others = await git($, ['git', 'ls-files', '-z', '--others', '--exclude-standard'], dir).catch(() => null)
+  const allUntracked = (others?.exitCode === 0 ? others.stdout.split('\0') : []).filter(Boolean).slice(0, 200)
+  // Content, not only names: an edit to a new file is a different snapshot (not "already reviewed"), and shows as stale.
+  // Secret-looking files still count for the hash (git hashes them; nothing of them leaves it), but are never pointed out to a reviewer.
+  const hashed = allUntracked.length ? await git($, ['git', 'hash-object', '--', ...allUntracked], dir, 6_000).catch(() => null) : null
+  // A secret diff cut at the output cap no longer stands for its content either.
+  const isUnhashed = (allUntracked.length > 0 && hashed?.exitCode !== 0) || secret.isStdoutTruncated === true
+  // A failed batch (a file vanished, a timeout) must not hash like another failed batch: nothing then matches "already reviewed".
+  const contents = isUnhashed ? `unhashed:${Date.now()}:${Math.random()}` : (hashed?.stdout ?? '')
   const untracked = allUntracked.filter(f => !isSecretPath(f))
-  const files = [...diffFiles(diff.stdout), ...untracked.filter(f => !diffFiles(diff.stdout).includes(f))]
   return {
-    hash: hashText(`${diff.stdout}\n--untracked--\n${allUntracked.join('\n')}`),
+    hash: hashText(`${diff.stdout}\n--secret--\n${hashText(secret.stdout)}\n--untracked--\n${allUntracked.join('\n')}\n--content--\n${contents}`),
     diff: diff.stdout,
     untracked,
-    files,
+    files: snapshotFiles(diff.stdout, untracked),
     isTruncated: diff.isStdoutTruncated,
     withheld: allUntracked.length - untracked.length,
+    secretChanges: diffFiles(secret.stdout).length,
+    isUnhashed,
   }
 }
 
@@ -1240,19 +1316,63 @@ async function patchReviewer($: EngineInterface, role: CouncilRole, change: (r: 
   await update($, council, c => ({ ...c, reviewers: { ...c.reviewers, [role]: change(c.reviewers[role]) } }))
 }
 
-/** Line counts of the files findings name, as they are now; null when unreadable or a secret. */
-async function lineCounts($: EngineInterface, files: string[]): Promise<Record<string, number | null>> {
+/**
+ * Line counts of the files findings name, as they are now; null when unreadable. A finding's path comes from a
+ * reviewer, so it is held to the reviewers' own rule before NEXUS reads it: inside the repository (symlinks
+ * followed), and not a secret. Nothing else is opened to count lines.
+ */
+async function lineCounts($: EngineInterface, files: string[], dir: string): Promise<Record<string, number | null>> {
   const out: Record<string, number | null> = {}
-  for (const f of new Set(files)) {
+  const todo = [...new Set(files)].slice(0, 100)
+  const one = async (f: string) => {
+    out[f] = null
+    if (!f || leavesRepo(f) || isSecretPath(f)) return
     try {
-      const r = (await $.fs.read(`${cwd}/${f}`)) as unknown
+      const abs = `${dir}/${f}`
+      // The path is absolute and the root fixed: the session's directory adds nothing, so it is not asked for per file.
+      const ctx = await reviewerPathCtx($, { file_path: abs }, dir, dir)
+      if (!mayCall('Read', [], { file_path: abs }, ctx).ok) return
+      const r = (await $.fs.read(abs)) as unknown
       const text = typeof r === 'string' ? r : ((r as { text?: string })?.text ?? null)
       out[f] = text === null ? null : text.split('\n').length
     } catch {
       out[f] = null
     }
   }
+  // At most 8 files in memory at once, not all 100.
+  for (let i = 0; i < todo.length; i += 8) await Promise.all(todo.slice(i, i + 8).map(one))
   return out
+}
+
+const realRoots = new Map<string, string>()
+/** Where a path really lands. null: it does not exist (yet). UNRESOLVED: it could not be told, which mayCall refuses. */
+const realOf = async ($: EngineInterface, path: string): Promise<string | null> => {
+  try {
+    return (await $.fs.stat(path, { resolve: true })).realPath ?? null
+  } catch (err) {
+    return /ENOENT|ENOTDIR|no such file|not found|does not exist/i.test(String((err as { code?: unknown })?.code ?? '') + String(err)) ? null : UNRESOLVED
+  }
+}
+
+/**
+ * Where a reviewer's path may land: the repository (its top level, symlinks resolved), and where this call's path
+ * really leads. Relative paths are the session's directory's, as the tools read them.
+ */
+async function reviewerPathCtx($: EngineInterface, input: Record<string, unknown>, fixedRoot?: string, fixedBase?: string): Promise<PathCtx | undefined> {
+  const base = fixedBase ?? (await liveCwd($))
+  const root = fixedRoot ?? (await reviewRoot($, base))
+  if (!root) return undefined
+  let real = realRoots.get(root)
+  if (real === undefined) {
+    real = (await realOf($, root)) ?? root
+    // A root that could not be resolved refuses this call only: cached, one passing stat error would refuse every later read.
+    if (real !== UNRESOLVED) {
+      realRoots.set(root, real)
+      capMap(realRoots, 20)
+    }
+  }
+  const path = ['file_path', 'path'].map(k => input[k]).find(v => typeof v === 'string') as string | undefined
+  return { base, roots: [root], realRoots: [real], realPath: path ? await realOf($, normalizePath(path, base)) : null }
 }
 
 /**
@@ -1264,6 +1384,8 @@ type OpenCheckpoint = {
   cp: Checkpoint
   roles: CouncilRole[]
   snap: ReviewSnapshot
+  /** The repository's top level when the checkpoint was authorized: the session may move (/cd, a worktree) while reviewers run. */
+  root: string
   summary: string
   launched: Set<CouncilRole>
   results: Map<CouncilRole, Omit<Finding, 'ref'>[] | null>
@@ -1312,7 +1434,8 @@ async function councilReview($: EngineInterface, input: Record<string, unknown>)
     if (!advisorSeen) return finish('refused', 'no advisor consultation was seen this turn: in Adaptive the advisor makes the pick, so nothing was launched')
     if (pick === 'none') return finish('skipped', `the advisor selected no specialist${rationale ? `: ${rationale}` : ''}`)
   }
-  const snap = await reviewSnapshot($)
+  const dir = await repoRoot($)
+  const snap = await reviewSnapshot($, dir)
   if ('error' in snap) return finish('refused', snap.error)
   if (!snap.diff.trim() && !snap.untracked.length) return finish('skipped', 'no changes to review (working tree matches HEAD)')
   if (c.reviewed.includes(snap.hash)) return finish('skipped', `this exact diff (${snap.hash}) was already reviewed this session; not reviewed twice`, { hash: snap.hash, files: snap.files })
@@ -1325,7 +1448,7 @@ async function councilReview($: EngineInterface, input: Record<string, unknown>)
     id: checkpointCount, at, activation, selection: pick, rationale, advisorSeen, hash: snap.hash, files: snap.files,
     isTruncated: snap.isTruncated, status: 'running', reason: null, findings: [], isStale: false, endedAt: null,
   }
-  open = { cp, roles, snap, summary, launched: new Set(), results: new Map() }
+  open = { cp, roles, snap, root: dir, summary, launched: new Set(), results: new Map() }
   await update($, council, x => ({
     ...x,
     checkpoint: cp,
@@ -1355,7 +1478,20 @@ async function councilSpawn($: EngineInterface, e: { subagentType?: string; prom
   if (open.launched.has(role)) return { deny: `${role} was already launched for checkpoint #${open.cp.id}` }
   open.launched.add(role)
   const task = reviewerTask(role, open.snap, open.summary, open.cp.activation === 'on' ? 'full council' : open.cp.rationale)
-  const spawned = await next({ ...e, prompt: task, description: `${role} review`, background: false, ...('run_in_background' in e ? { run_in_background: false } : {}) })
+  const o = open
+  let spawned: Awaited<ReturnType<typeof next>>
+  try {
+    spawned = await next({ ...e, prompt: task, description: `${role} review`, background: false, ...('run_in_background' in e ? { run_in_background: false } : {}) })
+  } catch (err) {
+    // The engine threw: this role launched nobody. Record it as failed, or "launched but never answered" would
+    // block every later checkpoint ("already running") for the rest of the session.
+    o.results.set(role, null)
+    const at = await $.clock.now()
+    await patchReviewer($, role, r => ({ ...r, status: 'failed', startedAt: at, endedAt: at, reason: `not launched: ${String(err).slice(0, 100)}` }))
+    await addFx($, 'council-fail', role)
+    await addLog($, { who: 'council', kind: 'error', text: `${ROLE_LABEL[role].toLowerCase()} failed`, detail: `launch error: ${String(err).slice(0, 120)}` })
+    throw err
+  }
   // Recorded before any other await: a background launch's Agent result can arrive right behind the spawn.
   if (spawned?.agentId) {
     reviewerRoles.set(spawned.agentId, role)
@@ -1420,16 +1556,33 @@ async function finalizeCheckpoint($: EngineInterface): Promise<string> {
   open = null
   const ok = o.roles.filter(r => o.results.get(r)).length
   // Re-hashed only when there are findings to judge: a failed re-check is said as such, never called stale.
-  const after = ok > 0 ? await reviewSnapshot($) : null
-  const isStale = after !== null && !('error' in after) && after.hash !== o.snap.hash
-  const recheck = after && 'error' in after ? `could not re-check the working tree after the review (${after.error}); verify the findings against the current code` : null
-  const raw = o.roles.flatMap(r => o.results.get(r) ?? []).map(f => ({ ...f, file: relPath(f.file, cwd) }))
-  const merged = dedupe(checkRefs(raw, await lineCounts($, raw.map(f => f.file).filter((f): f is string => !!f))))
+  const dir = o.root
+  const after = ok > 0 ? await reviewSnapshot($, dir) : null
+  const isUnverified = after !== null && !('error' in after) && (after.isUnhashed === true || o.snap.isUnhashed === true)
+  const isStale = after !== null && !('error' in after) && !isUnverified && after.hash !== o.snap.hash
+  const recheck =
+    after && 'error' in after ? `could not re-check the working tree after the review (${after.error}); verify the findings against the current code`
+    : isUnverified ? 'could not re-check new files\u2019 contents after the review; verify the findings against the current code'
+    : null
+  const raw = o.roles.flatMap(r => o.results.get(r) ?? []).map(f => ({ ...f, file: relPath(f.file, dir) }))
+  const merged = dedupe(checkRefs(raw, await lineCounts($, raw.map(f => f.file).filter((f): f is string => !!f), dir)))
   if (isStale) for (const r of o.roles) await patchReviewer($, r, x => (x.status === 'done' ? { ...x, status: 'stale', reason: 'the working tree changed during the review' } : x))
   const done: Checkpoint = { ...o.cp, status: ok === o.roles.length ? 'done' : 'partial', reason: recheck ?? o.cp.reason, findings: merged, isStale, endedAt: await $.clock.now() }
   const reviewers = (await read($, council)).reviewers
   // Marked reviewed only when some reviewer answered: a checkpoint where every run failed can be tried again.
-  await update($, council, x => ({ ...x, checkpoint: done, reviewed: ok > 0 ? [...x.reviewed, o.snap.hash].slice(-20) : x.reviewed }))
+  await update($, council, x => ({
+    ...x,
+    checkpoint: done,
+    // An unhashed snapshot never matches, so it is not kept: it would only push a real one out of the list.
+    reviewed: ok > 0 && !o.snap.isUnhashed ? [...x.reviewed, o.snap.hash].slice(-20) : x.reviewed,
+    // Grants are per agent id and each id runs once: keep the recent ones, not every reviewer of a long session.
+    granted: Object.fromEntries(Object.entries(x.granted).slice(-12)),
+  }))
+  // Session bookkeeping that nothing reads after a checkpoint closes: bounded, newest kept. reviewerRoles is not among
+  // them: the reviewer tool gate keys on it, and a running reviewer that fell out of it would go unchecked.
+  capMap(reviewerEnds, 30)
+  capMap(launchedBy, 30)
+  capMap(handbacks, 30)
   await addLog($, { who: 'council', kind: ok === o.roles.length ? 'done' : 'error', text: `council ${done.status}`, detail: `${merged.length} finding${merged.length === 1 ? '' : 's'} after merge${isStale ? ' · stale' : ''}` })
   return verdictText(done, o.roles.map(r => reviewers[r]))
 }
@@ -1442,7 +1595,8 @@ async function closeCheckpoint($: EngineInterface, why: string) {
   const missing = o.roles.filter(r => !o.launched.has(r))
   for (const r of missing) await patchReviewer($, r, x => ({ ...x, status: 'idle', reason: `authorized, not launched (${why})` }))
   if (o.results.size) {
-    await finalizeCheckpoint($)
+    // The verdict rides on the lead's next prompt (its turn ended, or a new checkpoint replaced this one), or a partial checkpoint would be silent.
+    pendingNotes.push(await finalizeCheckpoint($))
     return
   }
   open = null
@@ -1517,7 +1671,9 @@ async function requestCapability($: EngineInterface, agentId: string | undefined
 async function gitRead($: EngineInterface, input: Record<string, unknown>): Promise<string> {
   const plan = gitArgv(input.op, input.path, input.ref)
   if ('error' in plan) return `git_read refused: ${plan.error}`
-  const r = await git($, plan.argv).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err), isStdoutTruncated: false }))
+  const root = await reviewRoot($)
+  if (!root) return 'git_read refused: the session is not in a git repository'
+  const r = await git($, plan.argv, root).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err), isStdoutTruncated: false }))
   if (r.exitCode !== 0) return `git ${plan.argv[1]} failed: ${r.stderr.trim().slice(0, 300)}`
   const cut = r.stdout.length > GIT_OUT_CHARS || r.isStdoutTruncated
   return cut ? `${r.stdout.slice(0, GIT_OUT_CHARS)}\n[output truncated; narrow the path or ref]` : r.stdout
@@ -1648,7 +1804,10 @@ export const register: Register = (on, options) => {
     const id = e.agentId
     const name = String(e.tool)
     const c = await read($, council)
-    const verdict = mayCall(name, c.granted[id] ?? [], e as unknown as Record<string, unknown>)
+    const input = e as unknown as Record<string, unknown>
+    // Paths are checked where they really lead (symlinks followed) and against the session's directories.
+    const pathCtx = (BASE_TOOLS as readonly string[]).includes(name) ? await reviewerPathCtx($, input) : undefined
+    const verdict = mayCall(name, c.granted[id] ?? [], input, pathCtx)
     const label = `${name.replace(/^mcp__nexus__/, '')} ${toolTarget(e).label}`.trim()
     if (!verdict.ok) {
       await noteActivity($, id, `✗ refused ${label}`)
@@ -1660,7 +1819,8 @@ export const register: Register = (on, options) => {
       if (typeof message === 'string' && message.trim()) handbacks.set(id, message)
     }
     await noteActivity($, id, name === REPORT_TOOL ? 'handing back its report' : label)
-    return next(e)
+    // Every reviewer Grep carries the secret negations last: a glob may whitelist files .gitignore hides, and they win over it.
+    return next(name === 'Grep' ? ({ ...e, glob: guardGrepGlob((e as unknown as { glob?: unknown }).glob) } as typeof e) : e)
   }).catch(($, e, next) => (e.agentId && reviewerRoles.has(e.agentId) ? { deny: 'NEXUS could not check this reviewer call, so it is refused' } : next(e))) // fail closed for reviewers
 
   // ---- session --------------------------------------------------------------
@@ -1713,6 +1873,7 @@ export const register: Register = (on, options) => {
     const devActivation = await $.env.get('NEXUS_COUNCIL_ACTIVATION')
     if (devActivation === 'off' || devActivation === 'adaptive' || devActivation === 'on') {
       const activation: Prefs['council']['activation'] = devActivation
+      activationOverride = activation
       await update($, prefs, p => ({ ...p, council: { activation } }))
     }
     await registerCouncil($)
@@ -1760,7 +1921,10 @@ export const register: Register = (on, options) => {
     if (taskId && backgrounded.has(taskId)) {
       const role = await roleOf($, taskId)
       const st = origin.kind === 'peer' ? 'completed' : /<status>(\w+)<\/status>/.exec(e.text)?.[1] ?? ''
-      const result = /<result>([\s\S]*?)<\/result>/.exec(e.text)?.[1] ?? ''
+      const wrapped = /<result>([\s\S]*?)<\/result>/.exec(e.text)?.[1]
+      // A peer hand-back has no <result>: its report is the indented body after the frame line. The SubagentHandback
+      // call's own message (kept by agent id) wins; this is the fallback when that call was not seen.
+      const result = wrapped ?? (origin.kind === 'peer' ? (/The report follows:\n([\s\S]*)$/.exec(e.text)?.[1] ?? '').replace(/^ {2}/gm, '') : '')
       if (role) pendingNotes.push(await settleBackground($, taskId, role, { reason: st === 'completed' ? 'answer' : st === 'failed' ? 'error' : 'aborted', answer: result }))
     }
     // Notes ride on a prompt the model reads: never on a slash command.
