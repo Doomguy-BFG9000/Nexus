@@ -125,7 +125,7 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
 
 ## Verification
 
-**Automated** (`claude plugin test mod/nexus`): 201 tests. The Council tests are mocked engine events, not live runs. They cover:
+**Automated** (`claude plugin test mod/nexus`): 202 tests. The Council tests are mocked engine events, not live runs. They cover:
 - mode transitions and the Adaptive default;
 - the advisor's pick, none, an unreadable pick, a missing advisor, and an advisor call in the same response;
 - On launching all three;

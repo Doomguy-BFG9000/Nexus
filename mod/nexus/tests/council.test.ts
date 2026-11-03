@@ -364,10 +364,12 @@ test('council round 3: every reviewer Grep carries secret negations last, coveri
   }
 })
 
-test('council round 3: an unresolved path or root is refused, and a resolved path must also be inside as written', async () => {
+test('council round 3: an unresolved path or root is refused; where a path really lands decides', async () => {
   expect(mayCall('Read', [], { file_path: '/etc/passwd' }, { base: '/repo', roots: ['/repo'], realRoots: [UNRESOLVED], realPath: UNRESOLVED }).ok).toBe(false)
   expect(mayCall('Read', [], { file_path: 'src/a.ts' }, { base: '/repo', roots: ['/repo'], realRoots: ['/repo'], realPath: UNRESOLVED }).ok).toBe(false)
-  expect(mayCall('Read', [], { file_path: '/etc/passwd' }, { base: '/repo', roots: ['/repo'], realRoots: ['/repo'], realPath: '/repo/x' }).ok).toBe(false)
+  // Where a path really lands decides (it is what the tool opens): a link from elsewhere into the repository reads the repository.
+  expect(mayCall('Read', [], { file_path: '/tmp/repo/a.ts' }, { base: '/tmp/repo', roots: ['/private/tmp/repo'], realRoots: ['/private/tmp/repo'], realPath: '/private/tmp/repo/a.ts' })).toEqual({ ok: true })
+  expect(mayCall('Read', [], { file_path: '/repo/a.ts' }, { base: '/repo', roots: ['/repo'], realRoots: ['/repo'], realPath: '/etc/passwd' }).ok).toBe(false)
   expect(mayCall('Read', [], { file_path: '/private/repo/a.ts' }, { base: '/repo', roots: ['/repo'], realRoots: ['/private/repo'], realPath: '/private/repo/a.ts' })).toEqual({ ok: true })
 })
 

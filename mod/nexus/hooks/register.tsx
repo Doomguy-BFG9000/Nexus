@@ -1372,7 +1372,9 @@ async function reviewerPathCtx($: EngineInterface, input: Record<string, unknown
     }
   }
   const path = ['file_path', 'path'].map(k => input[k]).find(v => typeof v === 'string') as string | undefined
-  return { base, roots: [root], realRoots: [real], realPath: path ? await realOf($, normalizePath(path, base)) : null }
+  if (path) return { base, roots: [root], realRoots: [real], realPath: await realOf($, normalizePath(path, base)) }
+  // No path: the tool searches the session's directory, which may be spelled through a symlink.
+  return { base, roots: [root], realRoots: [real], realPath: null, realBase: await realOf($, base) }
 }
 
 /**

@@ -24,7 +24,7 @@
 - **Found by a targeted follow-up Council checkpoint on those fixes (all three completed), verified, then fixed:**
   - High: checking a Grep glob's spelling cannot be complete. `*.staging` searched a gitignored `.env.staging`, and even `*.ts` searched a gitignored `.env.ts` (probed). Every reviewer Grep now has negations for every secret class appended after its own glob, case-insensitive. In ripgrep the later glob wins (probed: `*.ts`, `**/*` and no glob, each with the negations, found no secret). The spelling check stays as a first layer that refuses with a reason.
   - High: `git_read show` with a path printed secrets: git reads `*env` as a wildcard, and `.` or a directory took in a committed `.env` (checked against git). Paths with `*`, `?`, `[` or `\` are refused, and the secret exclusions now follow any path.
-  - High: when both the repository root and a path failed to resolve, the two "could not tell" markers matched each other and confinement passed. An unresolved path or root is now refused, and a path must be inside the repository both as written and as resolved.
+  - High: when both the repository root and a path failed to resolve, the two "could not tell" markers matched each other and confinement passed. An unresolved path or root is now refused outright.
   - Medium: outside any repository, the reviewer gate fell back to "the session's directory is the repository", so its "no repository" refusals could not fire. With no checkpoint open and no git repository, reviewer reads and `git_read` are refused. One `reviewRoot` decides which repository a reviewer is bound to.
   - ESC, C1 controls and U+2028/U+2029 are stripped from finding text and refuse a finding path. Glob patterns cannot climb out through braces (`{../..,x}/**`). `git show` also leaves out `*.keychain` and `*.keychain-db`.
 - **Found by a second targeted checkpoint (all three completed; no high findings), verified, then fixed:**
@@ -34,7 +34,8 @@
   - Rejected with evidence: "a crafted glob can stall the plugin's event loop" (timed: a 919-character, many-wildcard glob took 1 ms; the names it is tested against are at most 21 characters).
 - **Final targeted checkpoint (all three completed): no high or medium findings.** From its lows: the snapshot diffs pass `--no-textconv` (as `git_read show` does), a secret-file diff cut at the output cap counts as "could not re-check", and a table-driven test now fails if a secret class is missing from the Grep negations.
 - Accepted, low: hashing very large untracked files can time out (then a review is not matched against earlier ones, so it can be re-authorized; never a false "already reviewed"). The ~37 icase exclude pathspecs on each snapshot diff are not timed on very large repositories. A repository inside a secret-looking folder refuses every reviewer read (fails safe).
-- Tests: 163 → 201.
+- After the last checkpoint, a regression in an earlier round's fix was found and fixed (flow test): a session spelled through a symlink (`/tmp/repo`, with git naming `/private/tmp/repo`) had relative reads and path-less searches refused. Where a path really leads decides again, and a path-less search accepts the session directory's resolved location.
+- Tests: 163 → 202.
 
 ## 0.7.0 (2026-11-02): NEXUS Council and reviewer tool routing
 - **NEXUS Council:** read-only Opus Security, Architecture and Performance reviewers at a review checkpoint (`mcp__nexus__council_review`). The setting is `council.activation`, saved in the plugin store:

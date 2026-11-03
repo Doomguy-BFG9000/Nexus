@@ -853,3 +853,22 @@ test('council round 4: a changed tracked secret is left out of the reviewers\' d
   const { note } = await agentResult($, 'security', 'tu-sec')
   expect(note).toMatch(/STALE/i)
 })
+
+test('council round 5: a session whose directory is spelled through a symlink (/tmp vs /private/tmp) can still read its repository', async ($, on) => {
+  const w = engine(on) as any
+  w.cwd = '/tmp/repo'
+  w.top = '/private/tmp/repo' // git names the physical path; the session its own spelling
+  w.real['/tmp/repo'] = '/private/tmp/repo'
+  w.real['/tmp/repo/src/db.ts'] = '/private/tmp/repo/src/db.ts'
+  w.real['/tmp/repo/src'] = '/private/tmp/repo/src'
+  await start($)
+  await leadTurnWithAdvisor($)
+  await councilCall($, { summary: 's', selection: 'security' })
+  const { agentId } = await spawn($, 'security', 'tu-sym')
+  const as = async (input: Record<string, unknown>) => JSON.stringify(await $.tool.call({ ...input, agentId } as any).catch((e: unknown) => ({ deny: String(e) })))
+  expect(await as({ tool: 'Read', file_path: 'src/db.ts' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Grep', pattern: 'KEY' })).not.toMatch(/deny/)
+  expect(await as({ tool: 'Glob', pattern: '**/*.ts' })).not.toMatch(/deny/)
+  // Still confined: elsewhere is refused however it is spelled.
+  expect(await as({ tool: 'Read', file_path: '/tmp/other/x.ts' })).toMatch(/deny/)
+})

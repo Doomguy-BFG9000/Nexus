@@ -354,6 +354,8 @@ export type PathCtx = {
   realRoots: readonly string[]
   /** Where the call's path lands once symlinks are followed; null/undefined when it leads nowhere (yet). */
   realPath?: string | null
+  /** Where `base` lands once symlinks are followed (asked for only by a call with no path). */
+  realBase?: string | null
 }
 
 /** An absolute, normalised spelling of `path` ('.' and '..' resolved lexically) against `base`. */
@@ -487,9 +489,10 @@ export function mayCall(tool: string, granted: readonly string[], input: Record<
       {
         const base = ctx.base ?? ctx.roots[0] ?? '/'
         const lexical = normalizePath(path, base)
+        // Refused outright: two failures to resolve (the root's and the path's) must never match each other.
         if (ctx.realPath === UNRESOLVED || ctx.realRoots.includes(UNRESOLVED)) return { ok: false, why: `${path}: NEXUS could not tell where it leads, so reviewers cannot read it` }
-        // As written and as resolved, both inside: a resolved path alone could match a root that failed the same way.
-        if (![...ctx.roots, ...ctx.realRoots].some(r => within(lexical, r))) return { ok: false, why: `${path} is outside the repository; reviewers read inside it only` }
+        // Where it really lands decides; the spelling only when it does not exist yet (`/tmp/x` and `/private/tmp/x` are one place).
+        if (!ctx.realPath && ![...ctx.roots, ...ctx.realRoots].some(r => within(lexical, r))) return { ok: false, why: `${path} is outside the repository; reviewers read inside it only` }
         if (ctx.realPath) {
           if (!ctx.realRoots.some(r => within(ctx.realPath!, r))) return { ok: false, why: `${path} leads outside the repository; reviewers read inside it only` }
           if (isSecretPath(ctx.realPath)) return { ok: false, why: `${path} leads to a secret; reviewers do not read secrets` }
@@ -500,7 +503,8 @@ export function mayCall(tool: string, granted: readonly string[], input: Record<
       // No path: Grep and Glob search the session's directory, which may have moved (/cd) off the checkpoint's repository.
       if (!ctx || !ctx.roots.length || !ctx.base) return { ok: false, why: `${tool} without a path: NEXUS could not tell where the repository is; pass a path inside it` }
       const base = normalizePath(ctx.base, '/')
-      if (![...ctx.roots, ...ctx.realRoots].some(r => within(base, r))) return { ok: false, why: `${tool} without a path would search ${ctx.base}, outside the repository under review; pass a path inside it` }
+      const realBase = ctx.realBase && ctx.realBase !== UNRESOLVED && !ctx.realRoots.includes(UNRESOLVED) ? ctx.realBase : null
+      if (![...ctx.roots, ...ctx.realRoots].some(r => within(base, r)) && !(realBase && ctx.realRoots.some(r => within(realBase, r)))) return { ok: false, why: `${tool} without a path would search ${ctx.base}, outside the repository under review; pass a path inside it` }
     }
     // Glob's pattern is a path too: it lists names wherever it points.
     const pattern = tool === 'Glob' && typeof input.pattern === 'string' ? input.pattern.trim() : ''
