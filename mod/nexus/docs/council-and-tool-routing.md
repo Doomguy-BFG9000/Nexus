@@ -28,7 +28,7 @@ NEXUS never switches between these for you.
 
 1. The lead changes code, consults the advisor, and calls `mcp__nexus__council_review` with a one-line summary (and in Adaptive, the advisor's pick and reason).
 2. NEXUS checks the call:
-   - Adaptive requires an advisor consultation earlier in the same turn.
+   - Adaptive requires an advisor consultation earlier in the same turn. If the lead calls the tool in the same response as the advisor, NEXUS waits (up to 5 s) for that response to end, since the API reports the advisor only then.
    - It captures a fixed snapshot: `git diff HEAD`, plus the names of untracked files, minus secret-looking ones.
    - It refuses an empty diff, a diff already reviewed this session, a second checkpoint while one is running, or a call from any subagent.
 3. It **authorizes** exactly the reviewers the mode allows and tells the lead to launch them with its own Agent tool, in one message, in the foreground. An interactive session may still run them in the background (Claude Code decides); both paths are handled.
@@ -44,7 +44,7 @@ NEXUS never switches between these for you.
    An answer with no readable findings is **INCOMPLETE**. An interrupted run is **INCOMPLETE**, and an API error or refusal is **FAILED**: never "done".
 6. When the last reviewer returns, NEXUS merges duplicate findings (same file, nearby lines, similar title; every reporter is kept) and re-hashes the tree. If the tree changed during the review, the result is **STALE**; if the re-check itself fails, the verdict says so instead. The lead is told to verify each finding before acting. The verdict reaches the lead as context:
    - **Foreground:** after that reviewer's Agent result.
-   - **Background:** the Agent call returns at once, and NEXUS tells the lead not to message or relaunch the reviewer. In auto mode a background reviewer hands its report back through Claude Code's `SubagentHandback` tool, which NEXUS allows and reads. Each reviewer's checked result, and the merged verdict after the last one, ride on its completion notification.
+   - **Background:** the Agent call returns at once, and NEXUS tells the lead not to message or relaunch the reviewer. In auto mode a background reviewer hands its report back through Claude Code's `SubagentHandback` tool, which NEXUS allows and reads. Each reviewer's checked result, and the merged verdict after the last one, ride on the message that brings its report to the lead: the hand-back message, or else its completion notification.
 7. If the lead never launches an authorized reviewer, the checkpoint closes as **authorized, not launched** at the end of its turn.
 
 There's no extra "chairman" model, and reviewers can't start reviews or other agents. NEXUS sets no turn or token cap on reviewers; provider limits still apply.
@@ -125,13 +125,13 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
 
 ## Verification
 
-**Automated** (`claude plugin test mod/nexus`): 162 tests. The 38 Council tests are mocked engine events, not live runs. They cover:
+**Automated** (`claude plugin test mod/nexus`): 163 tests. The 39 Council tests are mocked engine events, not live runs. They cover:
 - mode transitions and the Adaptive default;
-- the advisor's pick, none, an unreadable pick, and a missing advisor;
+- the advisor's pick, none, an unreadable pick, a missing advisor, and an advisor call in the same response;
 - On launching all three;
 - the gate (unauthorized, duplicate, no checkpoint);
 - failed, interrupted and unparsed reviews;
-- background launches (hand-back capture, results on completion notifications, a stopped reviewer, no false STALE);
+- background launches (hand-back capture, results on the hand-back message or completion notification, never on a slash command, a stopped reviewer, no false STALE);
 - stale snapshots and repeat diffs;
 - authorized but never launched;
 - path normalisation and redaction;
@@ -148,9 +148,15 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
   - The reviewer ran on `claude-opus-5-5`, and its checked verdict returned to the lead.
   - An email in its evidence was redacted.
 - **On with Opus:** the six On and Adaptive benchmark runs above, all clean (no hook failures, nothing written).
+- **The default path** (interactive, auto mode, Sonnet lead, Opus advisor and reviewer, Adaptive, no overrides):
+  - The lead consulted the advisor and called `council_review` in the same response.
+  - NEXUS waited for that response, then authorized security.
+  - Claude Code ran the reviewer in the background, on `claude-opus-5-5`.
+  - Its hand-back ended with the findings block.
+  - The checked verdict reached the lead with the hand-back message, and the checkpoint closed as done.
 - **On, interactive, background** (Haiku reviewers through the developer override `NEXUS_COUNCIL_MODEL`, to keep cost low):
   - Claude Code ran the reviewers in the background.
-  - They handed back their reports, and NEXUS settled each one on its completion notification.
+  - They handed back their reports, and NEXUS settled each one as its report arrived.
   - The merged verdict reached the lead as context, and the checkpoint closed as done.
   - A repeat call said "already reviewed".
 - **Esc, foreground** (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`): Esc stopped all three reviewers. They were reported INCOMPLETE, the checkpoint closed as partial, and the next review was allowed.
@@ -170,7 +176,7 @@ Input tokens include cache reads and writes. In all three Adaptive runs the advi
 - **The lead launches the reviewers.** A plugin tool hook has a ~10 s budget and can't wait for agents, so NEXUS authorizes, gates and checks, while the lead's own Agent calls run the reviewers. If the lead doesn't launch them, the checkpoint shows "authorized, not launched".
 - **Background reviewers:**
   - Esc doesn't stop them; use the task list (`x`).
-  - Their verdict reaches the lead with their completion notifications, so the lead's turn may end before it arrives.
+  - Their verdict reaches the lead with their reports, so the lead's turn may end before it arrives.
 - **A reload mid-review loses that review.** Reviewers still running are shown INCOMPLETE and not merged; run the review again. After the reload, a new review should be allowed at once (in code, not run live).
 - **Redaction covers NEXUS's verdict and dashboard only.** A reviewer's raw answer, shown to the lead by Claude Code before NEXUS's verdict, isn't rewritten.
 - **Same model, not independent proof.** Three Opus reviewers agreeing isn't independent validation; the lead is told to verify.
