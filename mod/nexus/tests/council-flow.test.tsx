@@ -76,6 +76,7 @@ function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | 
   })
   on('turn.step', async function* (_, e) {
     const isLead = !e.agentId
+    if (isLead && (w as any).hold) await (w as any).hold // a response still streaming
     return {
       turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const,
       usage: { model: isLead ? e.model : 'claude-opus-5-5', input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0 },
@@ -183,6 +184,31 @@ test('adaptive: the advisor’s pick authorizes exactly one specialist; it runs 
   expect(st).toMatch(/out 500 \(reported by the reviewers/) // its own reported usage
   expect(st).toMatch(/last checkpoint #\d+: done/)
   expect(w.gitCalls.some(a => ['add', 'stash', 'reset', 'checkout', 'commit'].includes(a[1]!))).toBe(false) // the index is never touched
+})
+
+test('adaptive: the advisor and council_review in the same response: NEXUS waits for that request to end, then authorizes', async ($, on) => {
+  const w = engine(on)
+  await start($)
+  w.t += 60_000
+  await w.clock.advance(60_000)
+  const turnId = `L${w.t}`
+  await $.turn.start({ text: 'review', turnId })
+  let release!: () => void
+  ;(w as any).hold = new Promise<void>(r => (release = r))
+  const stepping = (async () => {
+    for await (const _ of $.turn.step({ turnId, index: 0, model: 'claude-sonnet-5-5', effort: 'high', messageCount: 1 })) {
+      // drain
+    }
+  })()
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await status($) // dispatches of their own: the step's dispatch moves on meanwhile
+  }
+  await settle() // the request is under way
+  const pending = councilCall($, { summary: 's', selection: 'security', rationale: 'injection' })
+  await settle()
+  release() // the response ends: the API reports its advisor call
+  await stepping
+  expect(await pending).toMatch(/authorized .*: security\./)
 })
 
 test('adaptive: the advisor picked none, or nothing readable: nothing is authorized', async ($, on) => {

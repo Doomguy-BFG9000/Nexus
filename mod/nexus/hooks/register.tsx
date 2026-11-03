@@ -1201,6 +1201,12 @@ const backgrounded = new Set<string>()
 const handbacks = new Map<string, string>()
 /** Checked results of background reviewers, attached to the lead's next prompt (their completion notification). */
 const pendingNotes: string[] = []
+/** The lead's model request still streaming: the API reports its advisor call only when it ends. */
+let leadStep: { done: Promise<void>; end: () => void } | null = null
+/** When the lead last consulted the advisor, as the step that reported it saw: read across dispatches, unlike a $.state write still in flight. */
+let advisorAt: number | null = null
+/** How long council_review waits for that request to end (inside the hook's ~10 s budget). */
+const ADVISOR_WAIT_MS = 5_000
 let checkpointCount = 0
 
 const GIT_OUT_CHARS = 40_000
@@ -1278,9 +1284,18 @@ async function councilReview($: EngineInterface, input: Record<string, unknown>)
   const summary = typeof input.summary === 'string' ? input.summary.trim().slice(0, 400) : ''
   const rationale = typeof input.rationale === 'string' ? input.rationale.trim().slice(0, 300) : null
   const pick = activation === 'on' ? ('all' as const) : parseSelection(input.selection)
-  const [l, a, c] = await Promise.all([read($, lead), read($, advisor), read($, council)])
   // An advisor consultation this turn, after the last checkpoint: NEXUS sees that it happened, not what it said.
-  const advisorSeen = a.lastAt !== null && l.turnStartedAt !== null && a.lastAt >= l.turnStartedAt && a.lastAt > (c.checkpoint?.at ?? 0)
+  const consulted = async () => {
+    const [l, a, c] = await Promise.all([read($, lead), read($, advisor), read($, council)])
+    const at = Math.max(a.lastAt ?? -1, advisorAt ?? -1)
+    return { c, seen: at >= 0 && l.turnStartedAt !== null && at >= l.turnStartedAt && at > (c.checkpoint?.at ?? 0) }
+  }
+  let { c, seen: advisorSeen } = await consulted()
+  // Asked in the same response as the advisor: that request is still streaming, and reports the advisor when it ends.
+  if (activation === 'adaptive' && !advisorSeen && leadStep) {
+    await Promise.race([leadStep.done, $.clock.sleep(ADVISOR_WAIT_MS)])
+    ;({ c, seen: advisorSeen } = await consulted())
+  }
 
   const finish = async (status: Checkpoint['status'], reason: string, extra: Partial<Checkpoint> = {}) => {
     checkpointCount += 1
@@ -1842,52 +1857,61 @@ export const register: Register = (on, options) => {
         await addLog($, { who: 'mode', kind: 'error', text: 'mode not applied', detail: fits.reason })
       }
     }
-    const result = yield* next(req)
-    const usage_ = result.usage
-    await countStep($, stepKey(undefined, e.turnId, e.index), usage_?.model, usage_, false)
-    if (usage_) await guardSawRequest($, usage_)
-    await refreshUsage($)
+    let end = () => {}
+    const step = { done: new Promise<void>(r => (end = r)), end: () => end() }
+    leadStep = step
+    try {
+      const result = yield* next(req)
+      const usage_ = result.usage
+      await countStep($, stepKey(undefined, e.turnId, e.index), usage_?.model, usage_, false)
+      if (usage_) await guardSawRequest($, usage_)
+      await refreshUsage($)
 
-    const context = usage_
-      ? usage_.input_tokens + usage_.cache_read_input_tokens + usage_.cache_creation_input_tokens + usage_.output_tokens
-      : null
-    await update($, lead, l => ({
-      ...l,
-      model: usage_?.model ?? l.model,
-      requested: req.model,
-      effort: typeof req.effort === 'string' ? req.effort : req.effort === undefined ? l.effort : String(req.effort),
-      steps: l.steps + 1,
-      outputTokens: l.outputTokens + (usage_?.output_tokens ?? 0),
-      turnOutputTokens: l.turnOutputTokens + (usage_?.output_tokens ?? 0),
-      // isWaiting is left alone: tools start while a step still streams, so a
-      // dialog may already be up. It clears when its call settles.
-      contextTokens: context ?? l.contextTokens,
-    }))
-
-    // The API runs the advisor inside the request and reports it only here, so
-    // its pulse plays when the step ends, not while the advisor thinks.
-    for (const use of result.serverToolUses ?? []) {
-      if (use.name !== 'advisor') continue
-      const ms = use.endedAt === undefined ? null : use.endedAt - use.startedAt
-      // The API sums the advisor's own read into this step's usage, so the
-      // lead's figure would double: take the context Claude Code reports.
-      const before = (await read($, usage)).tokens
-      await update($, advisor, a => ({
-        calls: a.calls + 1,
-        lastAt: use.startedAt,
-        lastMs: ms,
-        contextAtCall: before,
-        history: [...a.history, { at: use.startedAt, ms, context: before }].slice(-5),
+      const context = usage_
+        ? usage_.input_tokens + usage_.cache_read_input_tokens + usage_.cache_creation_input_tokens + usage_.output_tokens
+        : null
+      await update($, lead, l => ({
+        ...l,
+        model: usage_?.model ?? l.model,
+        requested: req.model,
+        effort: typeof req.effort === 'string' ? req.effort : req.effort === undefined ? l.effort : String(req.effort),
+        steps: l.steps + 1,
+        outputTokens: l.outputTokens + (usage_?.output_tokens ?? 0),
+        turnOutputTokens: l.turnOutputTokens + (usage_?.output_tokens ?? 0),
+        // isWaiting is left alone: tools start while a step still streams, so a
+        // dialog may already be up. It clears when its call settles.
+        contextTokens: context ?? l.contextTokens,
       }))
-      await addFx($, 'advisor', use.id, 2 * DUAL[(await read($, prefs)).orbitStyle].cycleMs)
-      await addLog($, {
-        who: 'advisor',
-        kind: 'advisor',
-        text: `${family(m.sessionAdvisor) ?? 'advisor'} consulted · read the full session`,
-        detail: `${compact(before)} ctx${ms === null ? '' : ` · ${elapsed(ms)}`}`,
-      })
+
+      // The API runs the advisor inside the request and reports it only here, so
+      // its pulse plays when the step ends, not while the advisor thinks.
+      for (const use of result.serverToolUses ?? []) {
+        if (use.name !== 'advisor') continue
+        const ms = use.endedAt === undefined ? null : use.endedAt - use.startedAt
+        advisorAt = Math.max(advisorAt ?? -1, use.startedAt)
+        // The API sums the advisor's own read into this step's usage, so the
+        // lead's figure would double: take the context Claude Code reports.
+        const before = (await read($, usage)).tokens
+        await update($, advisor, a => ({
+          calls: a.calls + 1,
+          lastAt: use.startedAt,
+          lastMs: ms,
+          contextAtCall: before,
+          history: [...a.history, { at: use.startedAt, ms, context: before }].slice(-5),
+        }))
+        await addFx($, 'advisor', use.id, 2 * DUAL[(await read($, prefs)).orbitStyle].cycleMs)
+        await addLog($, {
+          who: 'advisor',
+          kind: 'advisor',
+          text: `${family(m.sessionAdvisor) ?? 'advisor'} consulted · read the full session`,
+          detail: `${compact(before)} ctx${ms === null ? '' : ` · ${elapsed(ms)}`}`,
+        })
+      }
+      return result
+    } finally {
+      step.end()
+      if (leadStep === step) leadStep = null
     }
-    return result
   })
 
   on('session.end', async ($, e, next) => {
