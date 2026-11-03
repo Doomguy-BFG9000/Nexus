@@ -10,6 +10,8 @@ import {
   gitArgv,
   guardGrepGlob,
   hashText,
+  isCouncilType,
+  roleOfType,
   isSecretPath,
   globRegExp,
   globTargetsSecret,
@@ -405,4 +407,12 @@ test('council round 5: every secret sample is a secret path, and the Grep negati
     for (const at of [name, `deep/dir/${name}`]) expect([at, negated.some(g => globRegExp(g)?.test(at) === true)]).toEqual([at, true])
     expect([name, globTargetsSecret(name)]).toEqual([name, true])
   }
+})
+
+test('Haiku agent types are never council reviewers: the authorization gate is unchanged by the agent definitions', async () => {
+  for (const t of ['nexus-audit', 'nexus-grep', 'nexus-search', 'nexus-auditor', 'audit', 'council-security']) {
+    expect([t, isCouncilType(t), roleOfType(t)]).toEqual([t, false, null])
+  }
+  expect(isCouncilType('nexus:council-security')).toBe(true)
+  expect(roleOfType('nexus:council-security')).toBe('security')
 })

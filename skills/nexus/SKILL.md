@@ -118,9 +118,11 @@ Dashboard preferences (layout, width, animation, Cache Guard) are set with `/nex
 **NEXUS agents.** This skill ships three optional Haiku agent definitions in `agents/`:
 - `nexus-search`: a read-only repo mapper;
 - `nexus-grep`: a read-only symbol locator;
-- `nexus-audit`: a change auditor that works in an isolated git worktree, runs checks, and reports without fixing.
+- `nexus-audit`: a lightweight, read-only check of the current change. It runs the project's existing type-check, tests or lint in the user's own checkout and reports concrete problems and missing tests, without fixing anything.
 
-With them, delegated work runs on Haiku and shows as NEXUS agents rather than *fallback*. To install, copy them to `~/.claude/agents/` (all projects) or `.claude/agents/` (one project). These are global config changes, so ask first, and don't overwrite existing files with the same names.
+With them, delegated work runs on Haiku and shows as NEXUS agents rather than *fallback*. To install, copy them to `~/.claude/agents/` (all projects) or `.claude/agents/` (one project). These are global config changes, so ask first.
+- If a file with the same name already exists, show the user the difference and ask before replacing it.
+- `nexus-audit` before November 2026 ran in an isolated git worktree with Write and `acceptEdits`. The current one has no Write tool and no permission mode, and its Bash commands go through the user's normal permission rules. Replacing the old file is the upgrade. See the [benchmark](../../mod/nexus/docs/haiku-agents-benchmark.md).
 
 **Jev:**
 - Jev needs a TypeSafe key. Have the user set `TYPESAFE_API_KEY`, or on macOS store it in the Keychain themselves:
