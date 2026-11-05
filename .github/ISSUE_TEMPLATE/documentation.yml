@@ -1,0 +1,21 @@
+name: Documentation
+description: Something is missing, wrong or unclear in the docs
+labels: ["documentation", "needs-triage"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Which page or section?
+      placeholder: "mod/nexus/docs/telemetry.md, “Cost estimates”"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Suggested wording (optional)

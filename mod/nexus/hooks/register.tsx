@@ -68,8 +68,12 @@ import {
   verdictText,
 } from './council'
 import type { PathCtx, Snapshot as ReviewSnapshot } from './council'
+import { ALLOWED_TOOLS as TEST_TOOLS, LOOSENING, cappedTimeout, judgeCommand, parseReport, reportLine } from './testrunner'
 import { AboutView, HelpView, NEXUS_VERSION, OutputView, aboutText, helpText } from './docs'
-import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
+import { DEFAULT_PREFS, PANE_MAX, SECTIONS, SETTINGS, defaultValue, exportPrefs, migrate, prefValue, resetAll, resetSection, resolveLayout, setPref } from './prefs'
+import type { SectionId } from './prefs'
+import { ORBIT_BG } from './orbitlayout'
+import { PaneOrbit } from './orbitview'
 import type { Prefs } from './prefs'
 import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
 import type { ModelRow } from './telemetry'
@@ -182,6 +186,8 @@ export const LOG_KEEP = 50
 
 const PANE = 'nexus'
 const PANE_OPEN = { id: PANE, title: 'NEXUS', columns: 92, backgroundColor: C.bg }
+/** Orbit redraws the black hole about four times a second while something runs; Classic's effects use ten. */
+const ORBIT_FRAME_MS = 250
 /** 10 frames a second while an effect plays; 1 under reduced motion (counters only). */
 const FRAME_MS = 100
 const STILL_MS = 1000
@@ -195,6 +201,8 @@ let timerMs = 0
 let isReduced = false
 /** animation: off — no timer at all; counters move only on events. */
 let isMotionOff = false
+/** The Orbit theme is chosen: slower frames, since its motion is slow. Mirrors prefs.theme. */
+let orbitTheme = false
 let cwd = ''
 let home = ''
 let sessionId = ''
@@ -235,7 +243,7 @@ function animate($: EngineInterface) {
     timer = null
     return
   }
-  const ms = isReduced ? STILL_MS : FRAME_MS
+  const ms = isReduced ? STILL_MS : orbitTheme ? ORBIT_FRAME_MS : FRAME_MS
   if (timer && timerMs === ms) return
   timer?.cancel()
   timerMs = ms
@@ -488,8 +496,10 @@ async function loadPrefs($: EngineInterface) {
     raw = undefined
     isStoreReadable = false
   }
-  const seeded = raw ?? { escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
+  // A first run gets Orbit; a store that could not be read is not a first run, so it keeps the look people may have had.
+  const seeded = raw ?? { theme: isStoreReadable ? 'orbit' : 'classic', escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
   const p = migrate(seeded)
+  orbitTheme = p.theme === 'orbit'
   storedActivation = p.council.activation
   await update($, prefs, () => p)
   if (isStoreReadable && JSON.stringify(raw) !== JSON.stringify(p)) await savePrefs($, p)
@@ -512,14 +522,53 @@ async function savePrefs($: EngineInterface, p: Prefs) {
   }
 }
 
-/** `/nexus settings [key value]`: show, or change one, for this and later sessions. */
+/** The settings of one section, or all four, as plain text rows. */
+function settingsListing(current: Prefs, only?: SectionId): string[] {
+  const rows: string[] = []
+  for (const sec of SECTIONS.filter(x => !only || x.id === only)) {
+    rows.push('', `${sec.title}: ${sec.blurb}`)
+    for (const spec of SETTINGS.filter(x => x.section === sec.id)) {
+      const choices = spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`
+      rows.push(`  ${spec.key.padEnd(22)} ${prefValue(current, spec.key).padEnd(11)} ${choices}  (default ${defaultValue(spec.key)})`, `  ${''.padEnd(22)} ${spec.label}: ${spec.help}`)
+    }
+  }
+  return rows
+}
+
+/** `/nexus settings [key value | section | reset <section|all> | export]`: show, or change, for this and later sessions. */
 async function settingsCommand($: EngineInterface, args: string): Promise<string> {
-  const [key, value] = args.split(/\s+/).filter(Boolean)
+  const words = args.split(/\s+/).filter(Boolean)
+  const [key, value] = words
   const current = await read($, prefs)
+  const saved = () => (isStoreReadable ? 'saved for later sessions' : 'this session only: the saved settings could not be read, so they were left as they are')
   if (!key) {
     await update($, view, () => ({ kind: 'settings' as const, ref: null }))
-    const rows = SETTINGS.map(spec => `  ${spec.key.padEnd(20)} ${prefValue(current, spec.key).padEnd(9)} ${spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`}  · ${spec.help}`)
-    return ['NEXUS settings (kept in the plugin store; Claude Code settings are not touched):', ...rows, '', 'Change one: /nexus settings <key> <value>'].join('\n')
+    return ['NEXUS settings (kept in the plugin store; Claude Code settings are not touched):', ...settingsListing(current), '', 'Change one: /nexus settings <key> <value>  ·  one section: /nexus settings appearance|agents|usage|advanced', 'Reset: /nexus settings reset <section>  ·  everything: /nexus settings reset all confirm  ·  copy: /nexus settings export'].join('\n')
+  }
+  if (key === 'export') return exportPrefs(current)
+  if (key === 'reset') {
+    const target = words[1]
+    const section = SECTIONS.find(x => x.id === target)
+    if (target === 'all') {
+      // Everything at once is confirmed: the pane asks, the command needs the word `confirm`.
+      if (words[2] !== 'confirm') {
+        await update($, view, () => ({ kind: 'settings' as const, ref: 'reset-all' }))
+        return 'This puts every setting back to its default (theme, animation, what agents may run, Council, Cache Guard, what is shown). Confirm: /nexus settings reset all confirm'
+      }
+      activationOverride = null
+      await applyPrefs($, current, resetAll())
+      await update($, view, () => ({ kind: 'settings' as const, ref: null }))
+      return `Every setting is back to its default (${saved()}).`
+    }
+    if (!section) return `reset takes ${SECTIONS.map(x => x.id).join(' | ')} | all`
+    if (section.id === 'agents') activationOverride = null
+    await applyPrefs($, current, resetSection(current, section.id))
+    return `${section.title} is back to its defaults; the other sections are unchanged (${saved()}).`
+  }
+  const section = SECTIONS.find(x => x.id === key)
+  if (section && value === undefined) {
+    await update($, view, () => ({ kind: 'settings' as const, ref: section.id }))
+    return [`${section.title}: ${section.blurb}`, ...settingsListing(current, section.id).slice(2)].join('\n')
   }
   if (value === undefined) return `${key} is ${prefValue(current, key)}`
   const out = setPref(current, key, value)
@@ -527,7 +576,7 @@ async function settingsCommand($: EngineInterface, args: string): Promise<string
   // The user choosing a council mode (even the one the override set) ends the session-only override.
   if (key === 'council.activation') activationOverride = null
   await applyPrefs($, current, out.prefs)
-  return `${key} → ${prefValue(out.prefs, key)} (${isStoreReadable ? 'saved for later sessions' : 'this session only: the saved settings could not be read, so they were left as they are'}).`
+  return `${key} → ${prefValue(out.prefs, key)} (${saved()}).`
 }
 
 /** Saves and applies new preferences: pane open/closed, motion, Cache Guard. */
@@ -537,6 +586,8 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
   if (next.layout === 'minimal' && was.layout !== 'minimal') await $.ui.close({ id: PANE }).catch(() => undefined)
   if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(paneOpen(next))
   if (next.paneColumns !== was.paneColumns && next.layout !== 'minimal') void $.ui.open(paneOpen(next))
+  orbitTheme = next.theme === 'orbit'
+  if (next.theme !== was.theme && next.layout !== 'minimal') void $.ui.open(paneOpen(next))
   await syncMotion($)
   animate($)
   if (JSON.stringify(was.cacheGuard) !== JSON.stringify(next.cacheGuard)) {
@@ -547,7 +598,7 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
 
 /** The pane's open request at the preferred width. */
 function paneOpen(p: Prefs) {
-  return { ...PANE_OPEN, columns: p.paneColumns }
+  return { ...PANE_OPEN, columns: p.paneColumns, backgroundColor: p.theme === 'orbit' ? ORBIT_BG : C.bg }
 }
 
 /** `/nexus width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
@@ -719,7 +770,7 @@ async function doctorText($: EngineInterface): Promise<string> {
   const isFullscreen = tui === 'fullscreen' || (tui as Record<string, unknown> | null)?.tui === 'fullscreen'
   const panes = await $.ui.panes().catch(() => [] as readonly { id: string }[])
   const defs = await Promise.all(
-    ['nexus-search', 'nexus-grep', 'nexus-audit'].map(async t => {
+    ['nexus-search', 'nexus-grep', 'nexus-audit', 'nexus-test'].map(async t => {
       for (const dir of [`${cwd}/.claude/agents`, `${home}/.claude/agents`]) if (await $.fs.exists(`${dir}/${t}.md`).catch(() => false)) return true
       return false
     }),
@@ -733,7 +784,7 @@ async function doctorText($: EngineInterface): Promise<string> {
     ok(isFullscreen, isFullscreen ? 'fullscreen TUI: the pane can dock' : 'fullscreen TUI is off: the pane sits above the prompt instead of docking ("tui": "fullscreen")'),
     ok(panes.some(x => x.id === PANE), panes.some(x => x.id === PANE) ? 'dashboard pane is open' : 'dashboard pane is closed (/nexus opens it)'),
     ok(kept === null, kept === null ? 'pane width follows /nexus width' : `pane width is kept at ${kept} columns from a hand resize (drag to change)`),
-    ok(defs.every(Boolean), `agent definitions: ${['search', 'grep', 'audit'].map((n, i) => `${n} ${defs[i] ? 'found' : 'missing'}`).join(', ')}`),
+    ok(defs.every(Boolean), `agent definitions: ${['search', 'grep', 'audit', 'test'].map((n, i) => `${n} ${defs[i] ? 'found' : 'missing'}`).join(', ')}`),
     ok(!pair || pair.ok, m.sessionAdvisor ? `advisor ${m.sessionAdvisor}: ${!pair ? 'not checked yet' : pair.ok ? 'valid for the current lead' : pair.reason}` : 'no advisor configured'),
     ok(Boolean(jevKey), jevKey ? `Jev key found (not shown) · ${j.status} · routing ${j.routing}` : 'Jev: no key (optional: TYPESAFE_API_KEY or Keychain nexus-typesafe)'),
     ok(g.status !== 'ERROR', `Cache Guard: ${p.cacheGuard.enabled ? `${g.status.toLowerCase()}${g.reason ? ` (${g.reason})` : ''}` : 'off (optional)'}`),
@@ -755,8 +806,9 @@ async function finishAgent($: EngineInterface, id: string, status: NexusAgent['s
   await addFx($, 'done', id)
   await addLog($, {
     who: who(agent.type),
-    kind: status === 'done' ? 'done' : 'error',
-    text: `${agent.label} ${status === 'done' ? `done in ${elapsed(now - agent.startedAt)}` : status}`,
+    kind: status === 'done' && !(agent.type === 'nexus-test' && parseReport(agent.summary).result === 'failed') ? 'done' : 'error',
+    // The Test agent's tape line is its own report, never more: counts only when it printed them.
+    text: agent.type === 'nexus-test' && status === 'done' ? reportLine(agent.label, parseReport(agent.summary)) : `${agent.label} ${status === 'done' ? `done in ${elapsed(now - agent.startedAt)}` : status}`,
     detail: status === 'done' ? `${agent.steps} turns · ${agent.tools} tools` : (reason ?? ''),
   })
 }
@@ -1217,6 +1269,40 @@ async function escalate($: EngineInterface, text: string) {
 /** How one reviewer's run ended, as its turn.complete said. */
 type ReviewerEnd = { reason: 'answer' | 'aborted' | 'refusal' | 'error'; answer: string }
 const reviewerEnds = new Map<string, ReviewerEnd>()
+/** Agents running as the Test agent (`nexus-test`): their Bash calls are checked. Bounded; the agents list is a second source. */
+const testAgents = new Set<string>()
+
+/** What the Test agent's call may do: a refusal with the reason, or the call to run (with our limits). */
+async function testGate($: EngineInterface, e: Record<string, unknown> & { tool: unknown; agentId?: string }): Promise<{ deny: string } | { input: never }> {
+  const name = String(e.tool)
+  const refuse = async (why: string) => {
+    await addLog($, { who: 'test', kind: 'error', text: `test agent refused ${name}`, detail: why.slice(0, 200) })
+    return { deny: `NEXUS Test agent: ${why}` }
+  }
+  // An allowlist, not a denylist: an MCP tool, Skill or a tool added later is refused too.
+  if (!(TEST_TOOLS as readonly string[]).includes(name) && name !== 'BashOutput') return refuse(`${name} is not available to the Test agent`)
+  if (name === 'BashOutput') return refuse('tests run in the foreground; there is no background output to read')
+  if (name === 'Bash') {
+    if ((await read($, prefs)).testRunner === 'off') return refuse('running tests is switched off (Settings → Agents → Run tests)')
+    const verdict = judgeCommand(e.command)
+    if (!verdict.ok) return refuse(verdict.why)
+    // The call the engine sees: the agent's own fields, minus anything that loosens a sandbox, with our limits.
+    const kept = Object.fromEntries(Object.entries(e).filter(([k]) => !LOOSENING.test(k)))
+    return { input: { ...kept, timeout: cappedTimeout(e.timeout), run_in_background: false } as never }
+  }
+  if (name === 'Read' && typeof e.file_path === 'string' && isSecretPath(e.file_path)) return refuse(`${e.file_path} looks like a secret file`)
+  return { input: (name === 'Grep' ? { ...e, glob: guardGrepGlob(e.glob) } : e) as never }
+}
+
+/** Whether an agent runs as the Test agent: remembered at spawn, else read from the agents list. */
+async function isTestAgent($: EngineInterface, id: string): Promise<boolean> {
+  if (testAgents.has(id)) return true
+  const isTest = (await read($, agents)).some(a => a.id === id && a.type === 'nexus-test')
+  // Remembered from here on (a reload loses the set; the agents list does not): the fail-closed catch reads only the set.
+  if (isTest) testAgents.add(id)
+  return isTest
+}
+
 /** agentId → role, set by the agent.spawn hook before the reviewer's first tool call (kept for late events). */
 const reviewerRoles = new Map<string, CouncilRole>()
 /** Reviewers the engine ran in the background: their result comes with their completion notification (or turn.complete), not the Agent call. */
@@ -1825,6 +1911,27 @@ export const register: Register = (on, options) => {
     return next(name === 'Grep' ? ({ ...e, glob: guardGrepGlob((e as unknown as { glob?: unknown }).glob) } as typeof e) : e)
   }).catch(($, e, next) => (e.agentId && reviewerRoles.has(e.agentId) ? { deny: 'NEXUS could not check this reviewer call, so it is refused' } : next(e))) // fail closed for reviewers
 
+  // ---- Test agent: a deterministic check on top of Claude Code's own permissions -------------
+  // The agent's definition lists only Read, Glob, Grep and Bash. This is the second check: Bash is
+  // limited to known test commands (testrunner.ts), always in the foreground with a capped timeout,
+  // and anything that writes, installs or reaches a secret is refused with the reason. It is not
+  // isolation: the tests themselves run with the lead's permissions.
+  on('tool.call', { tool: /^/ }, async ($, e, next) => {
+    if (!e.agentId) return next(e)
+    // The decision is made inside this try: any failure while deciding is a refusal, never a pass.
+    let call: { deny: string } | { input: typeof e } | null
+    try {
+      call = (await isTestAgent($, e.agentId)) ? await testGate($, e) : null
+    } catch {
+      call = testAgents.has(e.agentId) ? { deny: 'NEXUS could not check this Test agent call, so it is refused' } : null
+    }
+    if (!call) return next(e)
+    if ('deny' in call) return { deny: call.deny }
+    return next(call.input)
+  }).catch(($, e, next) => next(e))
+
+
+
   // ---- session --------------------------------------------------------------
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
@@ -2109,12 +2216,17 @@ export const register: Register = (on, options) => {
     if (isCouncilType(spawnType)) return councilSpawn($, e as unknown as { prompt: string } & Record<string, unknown>, spawnType, next)
     const spawned = await next(e)
     if (!spawned.agentId) return spawned
+    // First thing, before anything that could throw: the Test agent's calls are gated from its first one.
+    if (spawnType === 'nexus-test') {
+      testAgents.add(spawned.agentId)
+      if (testAgents.size > 200) testAgents.delete(testAgents.values().next().value!)
+    }
 
     const def = await definition($, e.subagentType)
     const sameType = (await read($, agents)).filter(a => a.type === e.subagentType).length
     const agent: NexusAgent = {
       id: spawned.agentId,
-      type: e.subagentType,
+      type: e.subagentType ?? spawnType,
       label: `${role(e.subagentType)}#${sameType + 1}`,
       isNexus: e.subagentType.startsWith('nexus-'),
       description: e.description,
@@ -2272,9 +2384,13 @@ export const register: Register = (on, options) => {
       back: () => void update($, view, () => ({ kind: 'diagram' as const, ref: null })),
       settings: () => void update($, view, () => ({ kind: 'settings' as const, ref: null })),
       set: (key, value) => void settingsCommand($, `${key} ${value}`),
+      section: id => void update($, view, () => ({ kind: 'settings' as const, ref: id })),
+      reset: what => void settingsCommand($, `reset ${what} confirm`),
+      activity: () => void update($, view, () => ({ kind: 'activity' as const, ref: null })),
     }
     const layout = e.surface === 'terminal' ? resolveLayout(s.prefs, width, e.props.placement) : 'list'
     if (layout === 'list') return <PaneList el={el} s={s} />
+    if (s.prefs.theme === 'orbit') return <PaneOrbit el={el} s={s} width={width} act={act} />
     if (layout === 'full') return <PaneFull el={el} s={s} width={width} act={act} />
     return <PaneCompact el={el} s={s} width={width} act={act} />
   })
@@ -2307,5 +2423,5 @@ export const register: Register = (on, options) => {
 
 function who(type: string): LogRow['who'] {
   const r = role(type)
-  return r === 'search' || r === 'grep' || r === 'audit' ? r : 'haiku'
+  return r === 'search' || r === 'grep' || r === 'audit' || r === 'test' ? r : 'haiku'
 }

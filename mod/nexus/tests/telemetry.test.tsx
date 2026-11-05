@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { freshness, limitLabel, resetLabel, tone } from '../hooks/telemetry'
+import { CLASSIC } from './classic'
 
 const pane = { plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused: false, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } } as const
 const NOW = Date.parse('2026-11-02T10:00:00Z')
@@ -11,6 +12,7 @@ type W = { usage?: unknown; identity?: unknown }
 function engine(on: On, w: W) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME: '/home/test' })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

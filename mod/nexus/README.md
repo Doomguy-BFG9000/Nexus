@@ -6,7 +6,7 @@
 
 Watch your lead model, its Haiku subagents, the advisor and the Jev router work, as it happens.
 
-![version](https://img.shields.io/badge/version-0.5.0-a99cf2?style=flat-square&labelColor=16171d)
+![version](https://img.shields.io/badge/version-0.8.0-a99cf2?style=flat-square&labelColor=16171d)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1.316-eb9a6c?style=flat-square&labelColor=16171d)
 ![native plugin](https://img.shields.io/badge/native-plugin%20API-7ea8f5?style=flat-square&labelColor=16171d)
 ![license](https://img.shields.io/badge/license-MIT-86d9a2?style=flat-square&labelColor=16171d)

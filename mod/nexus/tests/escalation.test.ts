@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC } from './classic'
 
 type Session = { advisor: string | null; answers?: string[]; classify?: string }
 
@@ -12,6 +13,7 @@ function engine(on: On, s: Session) {
   let classified = 0
   mock.clock(on)
   mock.env(on, { HOME: '/home/test' })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: s.advisor } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

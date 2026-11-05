@@ -191,7 +191,7 @@ test('instructions: adaptive asks the advisor for one Council line; on asks for 
 
 test('preferences v3: council defaults to adaptive, a choice survives, widths from v2 are kept', async () => {
   expect(DEFAULT_PREFS.council.activation).toBe('adaptive')
-  expect(migrate({ version: 2, paneColumns: 150, layout: 'compact' })).toMatchObject({ version: 3, paneColumns: 150, layout: 'compact', council: { activation: 'adaptive' } })
+  expect(migrate({ version: 2, paneColumns: 150, layout: 'compact' })).toMatchObject({ version: 4, theme: 'classic', paneColumns: 150, layout: 'compact', council: { activation: 'adaptive' } })
   expect(migrate({ version: 3, council: { activation: 'on' } }).council.activation).toBe('on')
   expect(migrate({ version: 3, council: { activation: 'everything' } }).council.activation).toBe('adaptive')
   expect(migrate({ version: 1, paneColumns: 120 }).paneColumns).toBe(999)

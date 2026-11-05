@@ -33,3 +33,7 @@ Dr. [Tian Tian](https://www.ualberta.ca/en/engineering/faculty-staff/academic-st
 - longer-running autonomous metadynamics workflows.
 
 He also shared the [pi-pocket](https://github.com/alchem0x2A/pi-pocket) harness as a reference. These ideas shaped Council's least-privilege reviewer tools, the deterministic router and its narrow-only extension point for a future decision model. This doesn't imply his endorsement of NEXUS, and no scientific workflow is part of NEXUS.
+
+## Orbit
+
+The Orbit theme's restrained, terminal-native look is inspired by [Omarchy](https://omarchy.org)'s aesthetic, and the Sonnet black hole by the way the black hole in the film *Interstellar* is usually drawn: a dark horizon, a bright accretion disk and light bent over and under it. NEXUS takes ideas only. **No code, image, font or other asset from either is used**; the black hole is computed from geometry in `mod/nexus/hooks/blackhole.ts`. This acknowledgment does not imply endorsement by Omarchy or anyone involved in the film.

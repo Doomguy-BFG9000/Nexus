@@ -4,6 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { HELP } from '../hooks/docs'
 import { nexusLogo, plain } from '../hooks/orbit'
 import { COMMANDS } from '../hooks/register'
+import { CLASSIC, classic } from './classic'
 
 const pane = (isFocused = false) =>
   ({ plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } }) as const
@@ -13,7 +14,7 @@ function engine(on: On, surface: 'terminal' | null = 'terminal') {
   const registered: string[] = []
   const placed: string[] = []
   mock.env(on, { HOME: '/home/test' })
-  mock.store(on, {})
+  mock.store(on, classic({}))
   on('settings.read', () => ({ value: { advisorModel: 'opus', tui: 'fullscreen' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
@@ -103,7 +104,7 @@ test('/nexus doctor checks the install without showing secrets', async ($, on) =
   await start($)
   const out = (await run($, 'nexus', 'doctor')).text!
   expect(out).toMatch(/^NEXUS doctor/)
-  expect(out).toMatch(/✓ Claude Code 2\.1\.316 · NEXUS 0\.7\.0/)
+  expect(out).toMatch(/✓ Claude Code 2\.1\.316 · NEXUS 0\.8\.0/)
   expect(out).toMatch(/✓ fullscreen TUI: the pane can dock/)
   expect(out).toMatch(/✓ dashboard pane is open/)
   expect(out).toMatch(/! agent definitions: search found, grep missing, audit missing/)

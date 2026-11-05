@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC } from './classic'
 
 const pane = (bodyColumns: number, placement: 'dock' | 'inline' = 'dock') =>
   ({
@@ -21,6 +22,7 @@ const pane = (bodyColumns: number, placement: 'dock' | 'inline' = 'dock') =>
 function engine(on: On) {
   mock.clock(on)
   mock.env(on, { HOME: '/home/test' })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

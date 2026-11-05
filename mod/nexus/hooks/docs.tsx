@@ -3,7 +3,7 @@
 // register.tsx; a test checks that.
 import { C } from './format'
 
-export const NEXUS_VERSION = '0.7.0'
+export const NEXUS_VERSION = '0.8.0'
 export const AUTHOR = 'Muhammad Zain'
 
 type El = { Box: any; Text: any }
@@ -18,7 +18,9 @@ export const HELP: HelpSection[] = [
       { cmd: '/nexus', text: 'open the dashboard' },
       { cmd: '/nexus close', text: 'close it (or ctrl+x x while it has focus)' },
       { cmd: '/nexus layout <auto|full|compact|minimal>', text: 'switch the layout' },
-      { cmd: '/nexus settings [key value]', text: 'open settings, or change one' },
+      { cmd: '/nexus settings [section | key value]', text: 'open settings (appearance, agents, usage, advanced), or change one' },
+      { cmd: '/nexus settings reset <section|all>', text: 'back to defaults; all asks you to confirm' },
+      { cmd: '/nexus settings export', text: 'print your preferences' },
       { cmd: '/nexus width <max|40-200|wider|narrower>', text: 'pane width (a width dragged by hand wins)' },
       { cmd: '/nexus back', text: 'back to the diagram from a detail view' },
     ],
@@ -62,6 +64,7 @@ export const KEYS: HelpRow[] = [
   { cmd: 'click · ctrl+x tab', text: 'focus the dashboard' },
   { cmd: '1-9', text: 'inspect an agent' },
   { cmd: 's · ⚙', text: 'settings' },
+  { cmd: 'a', text: 'full activity tape (Orbit)' },
   { cmd: 'b', text: 'back to the diagram' },
   { cmd: 'ctrl+x ← / →', text: 'wider / narrower' },
   { cmd: 'ctrl+x x', text: 'close the dashboard' },
@@ -81,7 +84,7 @@ export const ABOUT: AboutSection[] = [
     title: 'Who does the work',
     lines: [
       'Lead · Sonnet by default (Opus or Fable in stronger modes) reads your request, edits and runs tests.',
-      'Agents · Haiku subagents take delegated work in parallel: mapping a repo, searching, reviewing.',
+      'Agents · Haiku subagents take delegated work in parallel: search (map the repo), grep (trace symbols), audit (check the change) and test (run the project’s tests, known commands only).',
       'Advisor · a stronger model the lead consults before big decisions. It reads the session and never writes code.',
       'Council · read-only Opus reviewers (security, architecture, performance) the lead can launch at a review checkpoint. Adaptive (default): only the one the advisor picks. On: all three. Off: the advisor alone.',
       'Jev · optional. It answers small routing questions (which file, which tool, retry or not). Observe-only by default.',

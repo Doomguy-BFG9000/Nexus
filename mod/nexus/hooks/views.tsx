@@ -23,6 +23,12 @@ export type Actions = {
   back: () => void
   /** Sets one preference by its dotted key, as `/nexus settings` does. */
   set: (key: string, value: string) => void
+  /** Opens one settings section (null: the menu; 'reset-all': the confirmation). */
+  section: (id: string | null) => void
+  /** Puts one section, or every setting, back to its defaults. */
+  reset: (what: string) => void
+  /** Opens the full activity tape. */
+  activity: () => void
   isFocused: boolean
 }
 
@@ -62,6 +68,7 @@ const WHO_COLOR: Record<LogRow['who'], string> = {
   haiku: C.blue,
   mode: C.amber,
   council: C.purple,
+  test: C.blue,
 }
 const ICON: Record<LogRow['kind'], string> = {
   start: '▸',
@@ -105,7 +112,7 @@ export function isAnimating(s: Snapshot): boolean {
   )
 }
 
-function isWorking(s: Snapshot): boolean {
+export function isWorking(s: Snapshot): boolean {
   return s.lead.turnStartedAt !== null && !s.lead.isWaiting
 }
 
@@ -126,17 +133,17 @@ function spin(s: Snapshot): string {
   return s.reduceMotion ? '●' : SPIN[Math.floor(s.now / 125) % SPIN.length]!
 }
 
-function haikuModel(s: Snapshot): string {
+export function haikuModel(s: Snapshot): string {
   const one = s.agents.find(a => a.model)
   return one ? modelLabel(one.model) : 'haiku'
 }
 
 /** The advisor the session runs with, as settings and --settings say. */
-function advisorLabel(s: Snapshot): string {
+export function advisorLabel(s: Snapshot): string {
   return s.mode.sessionAdvisor ? modelLabel(modelId(s.mode.sessionAdvisor)) : 'off'
 }
 
-function modeName(s: Snapshot): string {
+export function modeName(s: Snapshot): string {
   const id = s.mode.selected ?? launchedMode(s.mode.sessionModel, s.mode.sessionAdvisor)
   return id ? MODES[id].label : 'custom'
 }
@@ -172,7 +179,7 @@ function agentPhase(s: Snapshot, a: NexusAgent | undefined): AgentPhase {
 }
 
 /** The latest Jev outcome and how long ago it came, while its arc plays. */
-function lastRoute(s: Snapshot): { outcome: JevOutcome | null; ms: number | null } {
+export function lastRoute(s: Snapshot): { outcome: JevOutcome | null; ms: number | null } {
   const f = [...s.fx].reverse().find(x => x.kind === 'route')
   if (!f) return { outcome: null, ms: null }
   return { outcome: f.ref as JevOutcome, ms: s.now - f.at }

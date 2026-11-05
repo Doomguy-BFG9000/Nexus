@@ -31,7 +31,7 @@ claude plugin install nexus@muhzain05 --scope user
 ```
 
 Requirements:
-- **Claude Code with the plugin (mod) API.** NEXUS 0.7.0 is built and tested against Claude Code 2.1.316. The mod API is early access, so after a Claude Code update run `/nexus doctor`.
+- **Claude Code with the plugin (mod) API.** NEXUS 0.8.0 is built and tested against Claude Code 2.1.316. The mod API is early access, so after a Claude Code update run `/nexus doctor`.
 - **The fullscreen TUI** (`"tui": "fullscreen"` in Claude Code's settings) for the pane to dock beside the chat. Without it the dashboard sits above the prompt. Don't edit the user's settings file unless they ask; tell them the setting and let them choose.
 - **A terminal:** the dashboard draws in the terminal only, not in IDE or desktop chat views.
 
@@ -76,7 +76,7 @@ Other common problems:
 
 | Command | Does |
 |---|---|
-| `/nexus` | open the dashboard. Also `close`, `agents`, `inspect <n\|label>`, `back`, `settings [key value]`, `layout <auto\|full\|compact\|minimal>`, `width <max\|40-200\|wider\|narrower>` |
+| `/nexus` | open the dashboard. Also `close`, `agents`, `inspect <n\|label>`, `back`, `settings [section\|key value\|reset <section\|all>\|export]`, `layout <auto\|full\|compact\|minimal>`, `width <max\|40-200\|wider\|narrower>` |
 | `/nexus usage` | context, cost estimate, plan usage, tokens by model |
 | `/nexus doctor` | check the install and integrations |
 | `/nexus cache [on\|off]` | Cache Guard status, or turn it on or off |
@@ -113,12 +113,13 @@ Other common problems:
 - `motion`: `auto`, `reduced` or `full`;
 - `jevRouting`: `observe`, `active` or `off`.
 
-Dashboard preferences (layout, width, animation, Cache Guard) are set with `/nexus settings` and live in the plugin's own store, not in Claude Code's settings.
+Dashboard preferences (theme, animation, layout, width, what to show, Cache Guard, whether the Test agent may run tests) are set with `/nexus settings` (four sections: appearance, agents, usage, advanced) and live in the plugin's own store, not in Claude Code's settings.
 
-**NEXUS agents.** This skill ships three optional Haiku agent definitions in `agents/`:
+**NEXUS agents.** This skill ships four optional Haiku agent definitions in `agents/`:
 - `nexus-search`: a read-only repo mapper;
 - `nexus-grep`: a read-only symbol locator;
-- `nexus-audit`: a lightweight, read-only check of the current change. It runs the project's existing type-check, tests or lint in the user's own checkout and reports concrete problems and missing tests, without fixing anything.
+- `nexus-audit`: a lightweight, read-only check of the current change. It runs the project's existing type-check, tests or lint in the user's own checkout and reports concrete problems and missing tests, without fixing anything;
+- `nexus-test`: runs the project's existing tests and reports what actually ran. NEXUS checks every command it runs against an allowlist of known test commands (no installs, no snapshot updates, no shell syntax), with a 5-minute cap; that is a guard on top of the user's normal permissions, not isolation. Settings → Agents → Run tests turns it off. It overlaps `nexus-audit` and has not been benchmarked: install it only if the user wants a separate test runner. See the [Test agent guide](../../mod/nexus/docs/test-agent.md).
 
 With them, delegated work runs on Haiku and shows as NEXUS agents rather than *fallback*. To install, copy them to `~/.claude/agents/` (all projects) or `.claude/agents/` (one project). These are global config changes, so ask first.
 - If a file with the same name already exists, show the user the difference and ask before replacing it.

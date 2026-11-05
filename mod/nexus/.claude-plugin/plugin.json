@@ -1,6 +1,6 @@
 {
   "name": "nexus",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Claude Code's own terminal as a multi-agent command center: model modes, agent inspection, advisor and Jev telemetry, usage, Cache Guard",
   "types": "./types/index.d.ts",
   "userConfig": {

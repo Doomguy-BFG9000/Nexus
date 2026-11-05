@@ -1,7 +1,8 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC } from './classic'
 
-const KEY = 'apikey_test_0123456789abcdef'
+const KEY = 'test-key-not-a-secret'
 
 type Reply = { status: number; body?: unknown } | 'hang' | 'throw'
 
@@ -10,6 +11,7 @@ function engine(on: On, w: { keychain: boolean; env?: string; reply: Reply }) {
   const sent: { url: string; auth: string | undefined; body: string }[] = []
   const logged: string[] = []
   mock.env(on, { HOME: '/home/test', ...(w.env ? { TYPESAFE_API_KEY: w.env } : {}) })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

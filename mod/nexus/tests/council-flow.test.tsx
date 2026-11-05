@@ -3,6 +3,7 @@
 // run. The live checks are described in docs/council-and-tool-routing.md.
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC, classic } from './classic'
 
 const DIFF = 'diff --git a/src/db.ts b/src/db.ts\n--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1,2 +1,3 @@\n+for (const u of users) await query(u)\n'
 const ANSWER = (file = 'src/db.ts', line = 2) =>
@@ -34,7 +35,7 @@ let world: World
 
 function engine(on: On, stored: Record<string, unknown> = {}, advisor: string | null = 'opus', env: Record<string, string> = {}): World {
   const clock = mock.clock(on, { now: 5_000_000 })
-  const w: World = { t: 5_000_000, clock, diff: DIFF, spawned: [], answers: {}, registered: { agents: [], tools: [] }, gitCalls: [], gitCwds: [], fsReads: [], untrackedBody: 'v1', real: {}, cwd: '/repo', top: null, failSpawn: false, saved: { ...stored }, sets: [], unreadable: false }
+  const w: World = { t: 5_000_000, clock, diff: DIFF, spawned: [], answers: {}, registered: { agents: [], tools: [] }, gitCalls: [], gitCwds: [], fsReads: [], untrackedBody: 'v1', real: {}, cwd: '/repo', top: null, failSpawn: false, saved: { ...classic(stored) }, sets: [], unreadable: false }
   world = w
   mock.env(on, { HOME: '/home/test', ...env })
   // The plugin store as a plain object, so a test can see exactly what was saved (and make it unreadable).
@@ -290,7 +291,7 @@ test('on: absolute paths from a reviewer are made repo-relative, and personal da
   await start($)
   await leadTurnWithAdvisor($)
   await councilCall($, { summary: 's', selection: 'all' })
-  const leak = '```json\n[{"severity":"low","file":"/repo/src/db.ts","line":1,"title":"Log mentions owner@example.com","evidence":"API_TOKEN=abcd1234secret in config","action":"remove","confidence":0.5}]\n```'
+  const leak = '```json\n[{"severity":"low","file":"/repo/src/db.ts","line":1,"title":"Log mentions owner@example.com","evidence":"API_TOKEN=abcd1234secret in config","action":"remove","confidence":0.5}]\n```' // gitleaks:allow (a fake token for the redaction test)
   await review($, 'security', leak)
   await review($, 'architecture', '```json\n[]\n```')
   const { note } = await review($, 'performance', '```json\n[]\n```')

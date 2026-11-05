@@ -1,11 +1,12 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC, classic } from './classic'
 
 const pane = { plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused: false, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 46 }, view: {} } } as const
 
 function engine(on: On, advisor: () => string | null, stored: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 2_000_000 })
-  mock.store(on, stored)
+  mock.store(on, classic(stored))
   mock.env(on, { HOME: '/home/test' })
   on('settings.read', () => ({ value: { advisorModel: advisor() } }))
   on('session.id', () => ({ value: 's' }))

@@ -83,7 +83,8 @@ export type Usage = {
   compactions: number
 }
 
-export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache'; ref: string | null }
+/** `settings` uses `ref` for the open section (null = the menu); `activity` is the full tape. */
+export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache' | 'activity'; ref: string | null }
 
 export type JevDecision = {
   at: number
@@ -155,28 +156,61 @@ export type Fx = {
 
 export type LogRow = {
   at: number
-  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'haiku' | 'mode' | 'council'
+  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'test' | 'haiku' | 'mode' | 'council'
   kind: 'start' | 'done' | 'error' | 'advisor' | 'mode' | 'jev' | 'info'
   text: string
   detail: string
 }
 
+export type TelemetryPreset = 'minimal' | 'standard' | 'full' | 'custom'
+
+/** What the dashboard shows. Visibility only: collection and routing never read these. */
+export type TelemetryFlags = {
+  /** Context used / window. */
+  context: boolean
+  /** Session API-priced estimate. */
+  cost: boolean
+  /** Plan usage windows (5h, 7d). */
+  usage: boolean
+  /** Token counts, per model and per agent. */
+  tokens: boolean
+  /** Agent and turn durations. */
+  times: boolean
+  /** Jev routing and Council status. */
+  routing: boolean
+  /** The activity tape / session log. */
+  activity: boolean
+  /** Amber warnings (context or plan usage at 70%+). Red alerts and failures are always shown. */
+  warnings: boolean
+}
+
 export type Prefs = {
-  version: 3
+  version: 4
+  /** classic: the original dashboard; orbit: the v0.8 look. */
+  theme: 'classic' | 'orbit'
+  /** Orbit's lead graphic: the black hole, the original orbit, or none. */
+  centerpiece: 'blackhole' | 'classic' | 'off'
+  /** Orbit's ambient animation pace. */
+  animationSpeed: 'slow' | 'veryslow'
+  /** Orbit's padding: comfortable breathes, compact fits more. */
+  density: 'comfortable' | 'compact'
   /** auto picks by pane width; full falls back when the pane is too narrow. */
   layout: 'auto' | 'full' | 'compact' | 'minimal'
   /** auto follows Claude Code's reduceMotion; off draws no motion and runs no timer. */
   animation: 'auto' | 'full' | 'reduced' | 'off'
   agentDetail: 'brief' | 'full'
-  /** The orbit animation: tight and quick, or wide and slow. */
+  /** The classic orbit animation: tight and quick, or wide and slow. */
   orbitStyle: 'tight' | 'wide'
-  telemetry: { context: boolean; cost: boolean; usage: boolean; tokens: boolean }
+  /** The preset picks what is shown; custom uses the individual flags below. */
+  telemetry: { preset: TelemetryPreset } & TelemetryFlags
   /** Session log rows above the prompt, 0 to 6. */
   logRows: number
   /** The width the pane asks for when it opens (a width dragged or keyed in Claude Code wins). */
   paneColumns: number
   jev: 'bars' | 'line' | 'hidden'
   escalation: 'ask' | 'off'
+  /** What the Test agent may run: known test commands only, or nothing. Checked by NEXUS on top of Claude Code's permissions. */
+  testRunner: 'allowlist' | 'off'
   cacheGuard: {
     enabled: boolean
     /** Minutes of verified inactivity before a beat (5 to 55). */
