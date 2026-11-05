@@ -13,7 +13,7 @@
 - **Activity tape.** A compact live tape (agent started, finished or failed, advisor consulted, Council, Jev, test results), with repeats within two seconds dropped, and a full view on `a`. A test run is reported from the agent's own `result:` line, never more.
 - **Preferences v4.** New keys `theme`, `centerpiece`, `animationSpeed`, `density`, `testRunner` and `telemetry.preset`; `telemetry` gains `times`, `routing`, `activity` and `warnings`. `animation` keeps its meaning (the motion level, which is *Reduced motion* in Orbit's settings).
 - **Repository.** CI (plugin validate and test, manifest and link checks, a secret scan), CONTRIBUTING, SECURITY, issue forms and a pull request template.
-- Tests: 202 → 301.
+- Tests: 205 → 301 (on this branch's CI run: 301 pass, 0 fail).
 
 ### Compatibility and known limits
 - Built against Claude Code 2.1.316; the test suite also passes on 2.1.318. The live dashboard was not driven in a real session on 2.1.318.

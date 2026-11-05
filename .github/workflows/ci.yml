@@ -44,7 +44,7 @@ jobs:
         run: python3 .github/scripts/check_repo.py
 
   secrets:
-    name: Secret scan (full history)
+    name: Secret scan (the commits in this change)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
