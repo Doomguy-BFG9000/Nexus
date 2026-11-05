@@ -16,6 +16,18 @@ Claude Code caps a docked pane at 45% of the terminal and keeps at least 60 colu
 
 That's one of Claude Code's built-in agents (such as Explore), not one of your Haiku agents. NEXUS marks it *fallback* and shows the model it actually ran on.
 
+### The dashboard looks different after 0.8 (or not different at all).
+
+New installs open the **Orbit** theme. If you used NEXUS before 0.8 you stay on **Classic** with your old settings until you choose otherwise: `/nexus settings theme orbit` (or `classic` to go back). The pane reopens so its background follows the theme. To put every setting back to its default, `/nexus settings reset all`, then confirm with `/nexus settings reset all confirm`. If a saved settings file could not be read at start, NEXUS draws Classic for that session and writes nothing over your saved settings.
+
+### `/nexus doctor` says the `test` agent definition is missing.
+
+The Test agent is optional. Copy `skills/nexus/agents/nexus-test.md` to `~/.claude/agents/` (or install the companion skill). Without it everything else works as before. [How the Test agent is limited](test-agent.md).
+
+### The black hole is not moving.
+
+It moves only while the session is working, and not at all under reduced motion (`/nexus settings animation` is `reduced` or `off`, or Claude Code's own *reduce motion* is on). That is deliberate: nothing redraws while idle.
+
 ### Does NEXUS change my Claude Code settings?
 
 No. Its preferences live in the plugin's own store, and modes apply to the current session only.

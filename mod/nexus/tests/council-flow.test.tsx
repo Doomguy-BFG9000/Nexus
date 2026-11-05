@@ -291,7 +291,7 @@ test('on: absolute paths from a reviewer are made repo-relative, and personal da
   await start($)
   await leadTurnWithAdvisor($)
   await councilCall($, { summary: 's', selection: 'all' })
-  const leak = '```json\n[{"severity":"low","file":"/repo/src/db.ts","line":1,"title":"Log mentions owner@example.com","evidence":"API_TOKEN=abcd1234secret in config","action":"remove","confidence":0.5}]\n```'
+  const leak = '```json\n[{"severity":"low","file":"/repo/src/db.ts","line":1,"title":"Log mentions owner@example.com","evidence":"API_TOKEN=abcd1234secret in config","action":"remove","confidence":0.5}]\n```' // gitleaks:allow (a fake token for the redaction test)
   await review($, 'security', leak)
   await review($, 'architecture', '```json\n[]\n```')
   const { note } = await review($, 'performance', '```json\n[]\n```')

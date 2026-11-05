@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import { CLASSIC } from './classic'
 
-const KEY = 'apikey_test_0123456789abcdef'
+const KEY = 'test-key-not-a-secret'
 
 type Reply = { status: number; body?: unknown } | 'hang' | 'throw'
 
