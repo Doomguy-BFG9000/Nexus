@@ -68,6 +68,7 @@ import {
   verdictText,
 } from './council'
 import type { PathCtx, Snapshot as ReviewSnapshot } from './council'
+import { ALLOWED_TOOLS as TEST_TOOLS, LOOSENING, cappedTimeout, judgeCommand, parseReport, reportLine } from './testrunner'
 import { AboutView, HelpView, NEXUS_VERSION, OutputView, aboutText, helpText } from './docs'
 import { DEFAULT_PREFS, PANE_MAX, SECTIONS, SETTINGS, defaultValue, exportPrefs, migrate, prefValue, resetAll, resetSection, resolveLayout, setPref } from './prefs'
 import type { SectionId } from './prefs'
@@ -805,8 +806,9 @@ async function finishAgent($: EngineInterface, id: string, status: NexusAgent['s
   await addFx($, 'done', id)
   await addLog($, {
     who: who(agent.type),
-    kind: status === 'done' ? 'done' : 'error',
-    text: `${agent.label} ${status === 'done' ? `done in ${elapsed(now - agent.startedAt)}` : status}`,
+    kind: status === 'done' && !(agent.type === 'nexus-test' && parseReport(agent.summary).result === 'failed') ? 'done' : 'error',
+    // The Test agent's tape line is its own report, never more: counts only when it printed them.
+    text: agent.type === 'nexus-test' && status === 'done' ? reportLine(agent.label, parseReport(agent.summary)) : `${agent.label} ${status === 'done' ? `done in ${elapsed(now - agent.startedAt)}` : status}`,
     detail: status === 'done' ? `${agent.steps} turns · ${agent.tools} tools` : (reason ?? ''),
   })
 }
@@ -1267,6 +1269,40 @@ async function escalate($: EngineInterface, text: string) {
 /** How one reviewer's run ended, as its turn.complete said. */
 type ReviewerEnd = { reason: 'answer' | 'aborted' | 'refusal' | 'error'; answer: string }
 const reviewerEnds = new Map<string, ReviewerEnd>()
+/** Agents running as the Test agent (`nexus-test`): their Bash calls are checked. Bounded; the agents list is a second source. */
+const testAgents = new Set<string>()
+
+/** What the Test agent's call may do: a refusal with the reason, or the call to run (with our limits). */
+async function testGate($: EngineInterface, e: Record<string, unknown> & { tool: unknown; agentId?: string }): Promise<{ deny: string } | { input: never }> {
+  const name = String(e.tool)
+  const refuse = async (why: string) => {
+    await addLog($, { who: 'test', kind: 'error', text: `test agent refused ${name}`, detail: why.slice(0, 200) })
+    return { deny: `NEXUS Test agent: ${why}` }
+  }
+  // An allowlist, not a denylist: an MCP tool, Skill or a tool added later is refused too.
+  if (!(TEST_TOOLS as readonly string[]).includes(name) && name !== 'BashOutput') return refuse(`${name} is not available to the Test agent`)
+  if (name === 'BashOutput') return refuse('tests run in the foreground; there is no background output to read')
+  if (name === 'Bash') {
+    if ((await read($, prefs)).testRunner === 'off') return refuse('running tests is switched off (Settings → Agents → Run tests)')
+    const verdict = judgeCommand(e.command)
+    if (!verdict.ok) return refuse(verdict.why)
+    // The call the engine sees: the agent's own fields, minus anything that loosens a sandbox, with our limits.
+    const kept = Object.fromEntries(Object.entries(e).filter(([k]) => !LOOSENING.test(k)))
+    return { input: { ...kept, timeout: cappedTimeout(e.timeout), run_in_background: false } as never }
+  }
+  if (name === 'Read' && typeof e.file_path === 'string' && isSecretPath(e.file_path)) return refuse(`${e.file_path} looks like a secret file`)
+  return { input: (name === 'Grep' ? { ...e, glob: guardGrepGlob(e.glob) } : e) as never }
+}
+
+/** Whether an agent runs as the Test agent: remembered at spawn, else read from the agents list. */
+async function isTestAgent($: EngineInterface, id: string): Promise<boolean> {
+  if (testAgents.has(id)) return true
+  const isTest = (await read($, agents)).some(a => a.id === id && a.type === 'nexus-test')
+  // Remembered from here on (a reload loses the set; the agents list does not): the fail-closed catch reads only the set.
+  if (isTest) testAgents.add(id)
+  return isTest
+}
+
 /** agentId → role, set by the agent.spawn hook before the reviewer's first tool call (kept for late events). */
 const reviewerRoles = new Map<string, CouncilRole>()
 /** Reviewers the engine ran in the background: their result comes with their completion notification (or turn.complete), not the Agent call. */
@@ -1875,6 +1911,27 @@ export const register: Register = (on, options) => {
     return next(name === 'Grep' ? ({ ...e, glob: guardGrepGlob((e as unknown as { glob?: unknown }).glob) } as typeof e) : e)
   }).catch(($, e, next) => (e.agentId && reviewerRoles.has(e.agentId) ? { deny: 'NEXUS could not check this reviewer call, so it is refused' } : next(e))) // fail closed for reviewers
 
+  // ---- Test agent: a deterministic check on top of Claude Code's own permissions -------------
+  // The agent's definition lists only Read, Glob, Grep and Bash. This is the second check: Bash is
+  // limited to known test commands (testrunner.ts), always in the foreground with a capped timeout,
+  // and anything that writes, installs or reaches a secret is refused with the reason. It is not
+  // isolation: the tests themselves run with the lead's permissions.
+  on('tool.call', { tool: /^/ }, async ($, e, next) => {
+    if (!e.agentId) return next(e)
+    // The decision is made inside this try: any failure while deciding is a refusal, never a pass.
+    let call: { deny: string } | { input: typeof e } | null
+    try {
+      call = (await isTestAgent($, e.agentId)) ? await testGate($, e) : null
+    } catch {
+      call = testAgents.has(e.agentId) ? { deny: 'NEXUS could not check this Test agent call, so it is refused' } : null
+    }
+    if (!call) return next(e)
+    if ('deny' in call) return { deny: call.deny }
+    return next(call.input)
+  }).catch(($, e, next) => next(e))
+
+
+
   // ---- session --------------------------------------------------------------
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
@@ -2159,12 +2216,17 @@ export const register: Register = (on, options) => {
     if (isCouncilType(spawnType)) return councilSpawn($, e as unknown as { prompt: string } & Record<string, unknown>, spawnType, next)
     const spawned = await next(e)
     if (!spawned.agentId) return spawned
+    // First thing, before anything that could throw: the Test agent's calls are gated from its first one.
+    if (spawnType === 'nexus-test') {
+      testAgents.add(spawned.agentId)
+      if (testAgents.size > 200) testAgents.delete(testAgents.values().next().value!)
+    }
 
     const def = await definition($, e.subagentType)
     const sameType = (await read($, agents)).filter(a => a.type === e.subagentType).length
     const agent: NexusAgent = {
       id: spawned.agentId,
-      type: e.subagentType,
+      type: e.subagentType ?? spawnType,
       label: `${role(e.subagentType)}#${sameType + 1}`,
       isNexus: e.subagentType.startsWith('nexus-'),
       description: e.description,

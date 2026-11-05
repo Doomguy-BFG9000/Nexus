@@ -122,7 +122,6 @@ test('the whole cycle of a large picture is cheap to build', () => {
   const t0 = performance.now()
   frames(100, 16)
   const ms = performance.now() - t0
-  console.log(`black hole: ${FRAMES} frames at 100x16 built in ${ms.toFixed(1)} ms`)
   expect(ms).toBeLessThan(1500)
 })
 
