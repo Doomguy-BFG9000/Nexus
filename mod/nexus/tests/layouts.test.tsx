@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { DEFAULT_PREFS, migrate, resolveLayout, setPref } from '../hooks/prefs'
+import { CLASSIC, classic } from './classic'
 
 const pane = (bodyColumns: number, placement: 'dock' | 'inline' = 'dock') =>
   ({ plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused: false, bodyColumns, placement, scroll: { offset: 0, bodyRows: 46 }, view: {} } }) as const
@@ -11,7 +12,7 @@ function engine(on: On, stored?: Record<string, unknown>) {
   const closed: string[] = []
   mock.clock(on, { now: 4_000_000 })
   mock.env(on, { HOME: '/home/test' })
-  mock.store(on, stored ?? {})
+  mock.store(on, classic(stored ?? {}))
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
@@ -168,7 +169,7 @@ test('/nexus width says so when a width set by hand in Claude Code is in charge'
   const opened: string[] = []
   mock.clock(on, { now: 4_000_000 })
   mock.env(on, { HOME: '/home/test' })
-  mock.store(on, {})
+  mock.store(on, classic({}))
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

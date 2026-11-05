@@ -4,6 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { HELP } from '../hooks/docs'
 import { nexusLogo, plain } from '../hooks/orbit'
 import { COMMANDS } from '../hooks/register'
+import { CLASSIC, classic } from './classic'
 
 const pane = (isFocused = false) =>
   ({ plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } }) as const
@@ -13,7 +14,7 @@ function engine(on: On, surface: 'terminal' | null = 'terminal') {
   const registered: string[] = []
   const placed: string[] = []
   mock.env(on, { HOME: '/home/test' })
-  mock.store(on, {})
+  mock.store(on, classic({}))
   on('settings.read', () => ({ value: { advisorModel: 'opus', tui: 'fullscreen' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

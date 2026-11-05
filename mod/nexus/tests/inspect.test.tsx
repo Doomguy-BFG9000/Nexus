@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC } from './classic'
 
 const pane = (isFocused: boolean, bodyColumns = 90) =>
   ({ plugin: 'nexus', component: 'Pane', requestId: 'nexus', surface: 'terminal', props: { title: 'NEXUS', isFocused, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows: 46 }, view: {} } }) as const
@@ -7,6 +8,7 @@ const pane = (isFocused: boolean, bodyColumns = 90) =>
 function engine(on: On, defs: Record<string, string> = {}) {
   const clock = mock.clock(on, { now: 3_000_000 })
   mock.env(on, { HOME: '/home/test' })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 's' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))

@@ -83,7 +83,8 @@ export type Usage = {
   compactions: number
 }
 
-export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache'; ref: string | null }
+/** `settings` uses `ref` for the open section (null = the menu); `activity` is the full tape. */
+export type View = { kind: 'diagram' | 'agent' | 'settings' | 'usage' | 'cache' | 'activity'; ref: string | null }
 
 export type JevDecision = {
   at: number
@@ -155,7 +156,7 @@ export type Fx = {
 
 export type LogRow = {
   at: number
-  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'haiku' | 'mode' | 'council'
+  who: 'jev' | 'advisor' | 'lead' | 'search' | 'grep' | 'audit' | 'test' | 'haiku' | 'mode' | 'council'
   kind: 'start' | 'done' | 'error' | 'advisor' | 'mode' | 'jev' | 'info'
   text: string
   detail: string

@@ -69,7 +69,10 @@ import {
 } from './council'
 import type { PathCtx, Snapshot as ReviewSnapshot } from './council'
 import { AboutView, HelpView, NEXUS_VERSION, OutputView, aboutText, helpText } from './docs'
-import { DEFAULT_PREFS, PANE_MAX, SETTINGS, migrate, prefValue, resolveLayout, setPref } from './prefs'
+import { DEFAULT_PREFS, PANE_MAX, SECTIONS, SETTINGS, defaultValue, exportPrefs, migrate, prefValue, resetAll, resetSection, resolveLayout, setPref } from './prefs'
+import type { SectionId } from './prefs'
+import { ORBIT_BG } from './orbitlayout'
+import { PaneOrbit } from './orbitview'
 import type { Prefs } from './prefs'
 import { addUsage, freshness, limitLabel, orderLimits, resetLabel, stepKey, usd } from './telemetry'
 import type { ModelRow } from './telemetry'
@@ -182,6 +185,8 @@ export const LOG_KEEP = 50
 
 const PANE = 'nexus'
 const PANE_OPEN = { id: PANE, title: 'NEXUS', columns: 92, backgroundColor: C.bg }
+/** Orbit redraws the black hole about four times a second while something runs; Classic's effects use ten. */
+const ORBIT_FRAME_MS = 250
 /** 10 frames a second while an effect plays; 1 under reduced motion (counters only). */
 const FRAME_MS = 100
 const STILL_MS = 1000
@@ -195,6 +200,8 @@ let timerMs = 0
 let isReduced = false
 /** animation: off — no timer at all; counters move only on events. */
 let isMotionOff = false
+/** The Orbit theme is chosen: slower frames, since its motion is slow. Mirrors prefs.theme. */
+let orbitTheme = false
 let cwd = ''
 let home = ''
 let sessionId = ''
@@ -235,7 +242,7 @@ function animate($: EngineInterface) {
     timer = null
     return
   }
-  const ms = isReduced ? STILL_MS : FRAME_MS
+  const ms = isReduced ? STILL_MS : orbitTheme ? ORBIT_FRAME_MS : FRAME_MS
   if (timer && timerMs === ms) return
   timer?.cancel()
   timerMs = ms
@@ -488,8 +495,10 @@ async function loadPrefs($: EngineInterface) {
     raw = undefined
     isStoreReadable = false
   }
-  const seeded = raw ?? { escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
+  // A first run gets Orbit; a store that could not be read is not a first run, so it keeps the look people may have had.
+  const seeded = raw ?? { theme: isStoreReadable ? 'orbit' : 'classic', escalation: opts.escalation, animation: opts.motion === 'reduced' ? 'reduced' : opts.motion === 'full' ? 'full' : 'auto' }
   const p = migrate(seeded)
+  orbitTheme = p.theme === 'orbit'
   storedActivation = p.council.activation
   await update($, prefs, () => p)
   if (isStoreReadable && JSON.stringify(raw) !== JSON.stringify(p)) await savePrefs($, p)
@@ -512,14 +521,53 @@ async function savePrefs($: EngineInterface, p: Prefs) {
   }
 }
 
-/** `/nexus settings [key value]`: show, or change one, for this and later sessions. */
+/** The settings of one section, or all four, as plain text rows. */
+function settingsListing(current: Prefs, only?: SectionId): string[] {
+  const rows: string[] = []
+  for (const sec of SECTIONS.filter(x => !only || x.id === only)) {
+    rows.push('', `${sec.title}: ${sec.blurb}`)
+    for (const spec of SETTINGS.filter(x => x.section === sec.id)) {
+      const choices = spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`
+      rows.push(`  ${spec.key.padEnd(22)} ${prefValue(current, spec.key).padEnd(11)} ${choices}  (default ${defaultValue(spec.key)})`, `  ${''.padEnd(22)} ${spec.label}: ${spec.help}`)
+    }
+  }
+  return rows
+}
+
+/** `/nexus settings [key value | section | reset <section|all> | export]`: show, or change, for this and later sessions. */
 async function settingsCommand($: EngineInterface, args: string): Promise<string> {
-  const [key, value] = args.split(/\s+/).filter(Boolean)
+  const words = args.split(/\s+/).filter(Boolean)
+  const [key, value] = words
   const current = await read($, prefs)
+  const saved = () => (isStoreReadable ? 'saved for later sessions' : 'this session only: the saved settings could not be read, so they were left as they are')
   if (!key) {
     await update($, view, () => ({ kind: 'settings' as const, ref: null }))
-    const rows = SETTINGS.map(spec => `  ${spec.key.padEnd(20)} ${prefValue(current, spec.key).padEnd(9)} ${spec.options ? spec.options.join(' | ') : `${spec.range![0]}-${spec.range![1]}`}  · ${spec.help}`)
-    return ['NEXUS settings (kept in the plugin store; Claude Code settings are not touched):', ...rows, '', 'Change one: /nexus settings <key> <value>'].join('\n')
+    return ['NEXUS settings (kept in the plugin store; Claude Code settings are not touched):', ...settingsListing(current), '', 'Change one: /nexus settings <key> <value>  ·  one section: /nexus settings appearance|agents|usage|advanced', 'Reset: /nexus settings reset <section>  ·  everything: /nexus settings reset all confirm  ·  copy: /nexus settings export'].join('\n')
+  }
+  if (key === 'export') return exportPrefs(current)
+  if (key === 'reset') {
+    const target = words[1]
+    const section = SECTIONS.find(x => x.id === target)
+    if (target === 'all') {
+      // Everything at once is confirmed: the pane asks, the command needs the word `confirm`.
+      if (words[2] !== 'confirm') {
+        await update($, view, () => ({ kind: 'settings' as const, ref: 'reset-all' }))
+        return 'This puts every setting back to its default (theme, animation, what agents may run, Council, Cache Guard, what is shown). Confirm: /nexus settings reset all confirm'
+      }
+      activationOverride = null
+      await applyPrefs($, current, resetAll())
+      await update($, view, () => ({ kind: 'settings' as const, ref: null }))
+      return `Every setting is back to its default (${saved()}).`
+    }
+    if (!section) return `reset takes ${SECTIONS.map(x => x.id).join(' | ')} | all`
+    if (section.id === 'agents') activationOverride = null
+    await applyPrefs($, current, resetSection(current, section.id))
+    return `${section.title} is back to its defaults; the other sections are unchanged (${saved()}).`
+  }
+  const section = SECTIONS.find(x => x.id === key)
+  if (section && value === undefined) {
+    await update($, view, () => ({ kind: 'settings' as const, ref: section.id }))
+    return [`${section.title}: ${section.blurb}`, ...settingsListing(current, section.id).slice(2)].join('\n')
   }
   if (value === undefined) return `${key} is ${prefValue(current, key)}`
   const out = setPref(current, key, value)
@@ -527,7 +575,7 @@ async function settingsCommand($: EngineInterface, args: string): Promise<string
   // The user choosing a council mode (even the one the override set) ends the session-only override.
   if (key === 'council.activation') activationOverride = null
   await applyPrefs($, current, out.prefs)
-  return `${key} → ${prefValue(out.prefs, key)} (${isStoreReadable ? 'saved for later sessions' : 'this session only: the saved settings could not be read, so they were left as they are'}).`
+  return `${key} → ${prefValue(out.prefs, key)} (${saved()}).`
 }
 
 /** Saves and applies new preferences: pane open/closed, motion, Cache Guard. */
@@ -537,6 +585,8 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
   if (next.layout === 'minimal' && was.layout !== 'minimal') await $.ui.close({ id: PANE }).catch(() => undefined)
   if (next.layout !== 'minimal' && was.layout === 'minimal') void $.ui.open(paneOpen(next))
   if (next.paneColumns !== was.paneColumns && next.layout !== 'minimal') void $.ui.open(paneOpen(next))
+  orbitTheme = next.theme === 'orbit'
+  if (next.theme !== was.theme && next.layout !== 'minimal') void $.ui.open(paneOpen(next))
   await syncMotion($)
   animate($)
   if (JSON.stringify(was.cacheGuard) !== JSON.stringify(next.cacheGuard)) {
@@ -547,7 +597,7 @@ async function applyPrefs($: EngineInterface, was: Prefs, next: Prefs) {
 
 /** The pane's open request at the preferred width. */
 function paneOpen(p: Prefs) {
-  return { ...PANE_OPEN, columns: p.paneColumns }
+  return { ...PANE_OPEN, columns: p.paneColumns, backgroundColor: p.theme === 'orbit' ? ORBIT_BG : C.bg }
 }
 
 /** `/nexus width <columns|wider|narrower>`: resizes without the ctrl+x keys. */
@@ -719,7 +769,7 @@ async function doctorText($: EngineInterface): Promise<string> {
   const isFullscreen = tui === 'fullscreen' || (tui as Record<string, unknown> | null)?.tui === 'fullscreen'
   const panes = await $.ui.panes().catch(() => [] as readonly { id: string }[])
   const defs = await Promise.all(
-    ['nexus-search', 'nexus-grep', 'nexus-audit'].map(async t => {
+    ['nexus-search', 'nexus-grep', 'nexus-audit', 'nexus-test'].map(async t => {
       for (const dir of [`${cwd}/.claude/agents`, `${home}/.claude/agents`]) if (await $.fs.exists(`${dir}/${t}.md`).catch(() => false)) return true
       return false
     }),
@@ -733,7 +783,7 @@ async function doctorText($: EngineInterface): Promise<string> {
     ok(isFullscreen, isFullscreen ? 'fullscreen TUI: the pane can dock' : 'fullscreen TUI is off: the pane sits above the prompt instead of docking ("tui": "fullscreen")'),
     ok(panes.some(x => x.id === PANE), panes.some(x => x.id === PANE) ? 'dashboard pane is open' : 'dashboard pane is closed (/nexus opens it)'),
     ok(kept === null, kept === null ? 'pane width follows /nexus width' : `pane width is kept at ${kept} columns from a hand resize (drag to change)`),
-    ok(defs.every(Boolean), `agent definitions: ${['search', 'grep', 'audit'].map((n, i) => `${n} ${defs[i] ? 'found' : 'missing'}`).join(', ')}`),
+    ok(defs.every(Boolean), `agent definitions: ${['search', 'grep', 'audit', 'test'].map((n, i) => `${n} ${defs[i] ? 'found' : 'missing'}`).join(', ')}`),
     ok(!pair || pair.ok, m.sessionAdvisor ? `advisor ${m.sessionAdvisor}: ${!pair ? 'not checked yet' : pair.ok ? 'valid for the current lead' : pair.reason}` : 'no advisor configured'),
     ok(Boolean(jevKey), jevKey ? `Jev key found (not shown) · ${j.status} · routing ${j.routing}` : 'Jev: no key (optional: TYPESAFE_API_KEY or Keychain nexus-typesafe)'),
     ok(g.status !== 'ERROR', `Cache Guard: ${p.cacheGuard.enabled ? `${g.status.toLowerCase()}${g.reason ? ` (${g.reason})` : ''}` : 'off (optional)'}`),
@@ -2272,9 +2322,13 @@ export const register: Register = (on, options) => {
       back: () => void update($, view, () => ({ kind: 'diagram' as const, ref: null })),
       settings: () => void update($, view, () => ({ kind: 'settings' as const, ref: null })),
       set: (key, value) => void settingsCommand($, `${key} ${value}`),
+      section: id => void update($, view, () => ({ kind: 'settings' as const, ref: id })),
+      reset: what => void settingsCommand($, `reset ${what} confirm`),
+      activity: () => void update($, view, () => ({ kind: 'activity' as const, ref: null })),
     }
     const layout = e.surface === 'terminal' ? resolveLayout(s.prefs, width, e.props.placement) : 'list'
     if (layout === 'list') return <PaneList el={el} s={s} />
+    if (s.prefs.theme === 'orbit') return <PaneOrbit el={el} s={s} width={width} act={act} />
     if (layout === 'full') return <PaneFull el={el} s={s} width={width} act={act} />
     return <PaneCompact el={el} s={s} width={width} act={act} />
   })
@@ -2307,5 +2361,5 @@ export const register: Register = (on, options) => {
 
 function who(type: string): LogRow['who'] {
   const r = role(type)
-  return r === 'search' || r === 'grep' || r === 'audit' ? r : 'haiku'
+  return r === 'search' || r === 'grep' || r === 'audit' || r === 'test' ? r : 'haiku'
 }

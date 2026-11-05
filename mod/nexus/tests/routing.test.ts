@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { CLASSIC } from './classic'
 
 const KEY = 'apikey_routing_test_key'
 const CWD = '/work/repo'
@@ -34,6 +35,7 @@ function engine(on: On, w: World) {
   const toolRuns: string[] = []
   const reads = [...(w.reads ?? [])]
   mock.env(on, { HOME: '/home/test' })
+  mock.store(on, CLASSIC)
   on('settings.read', () => ({ value: { advisorModel: 'opus' } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
