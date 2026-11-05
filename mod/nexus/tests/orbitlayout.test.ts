@@ -129,7 +129,8 @@ test('presets: Minimal hides numbers, Standard shows context and times, Full add
 test('custom: each visibility choice works alone', () => {
   const only = (key: string) => all(orbitLines(snap({}, withPrefs(['telemetry.preset', 'minimal'], [key, 'on'])), 100))
   expect(only('telemetry.cost')).toMatch(/\$12\.99/)
-  expect(only('telemetry.tokens')).toMatch(/tokens/)
+  expect(only('telemetry.tokens')).toMatch(/tokens in 380k {2}out 21k/)
+  expect(only('telemetry.tokens')).toMatch(/cache read 900k {2}write 40k/)
   expect(only('telemetry.times')).toMatch(/4m 34s/)
   expect(only('telemetry.activity')).toMatch(/Activity/)
   expect(only('telemetry.routing')).toMatch(/Jev · routing/)
@@ -172,6 +173,7 @@ test('many agents: any number of instances of a role, the busiest first, the res
 
 test('Jev says whether it is only observing or acting, and Council its own state', () => {
   expect(all(orbitLines(snap(), 100))).toMatch(/observe only/)
+  expect(all(orbitLines(snap(), 84))).toMatch(/agreed 116\/140  ·  abstained 0/)
   const s = snap()
   expect(all(orbitLines({ ...s, jev: { ...s.jev, routing: 'active' } }, 100))).toMatch(/active/)
   expect(all(orbitLines({ ...s, jev: { ...s.jev, status: 'off' } }, 100))).toMatch(/off · set in the plugin options/)

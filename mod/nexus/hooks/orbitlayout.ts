@@ -331,7 +331,7 @@ function jevPanel(s: Snapshot, w: number): Line[] {
   const isRoomy = inner >= 56
   const tag: Line = isRoomy ? [seg(`decisions ${j.decisions}`, O.soft), seg('  ', O.faint), seg(state, stateColour)] : [seg(state, stateColour)]
   if (!isRoomy) rows.push([seg(`decisions ${j.decisions}  ·  ${agreed}`, O.dim)])
-  else if (j.status !== 'off') rows.push([seg(`sharp ≥ 0.85  ·  ${agreed}`, O.dim)])
+  else if (j.status !== 'off') rows.push([seg(`sharp ≥ 0.85  ·  ${agreed}  ·  abstained ${j.fallbacks}`, O.dim)])
   return panel({ title: 'Jev · routing', titleColor: O.jev, edge: O.edge.jev, width: w, rows, tag, accent: true })
 }
 
@@ -440,9 +440,14 @@ function usagePanel(s: Snapshot, w: number): Line[] {
   if (v.context && u.percent !== null) mid.push([seg(meter(u.percent / 100, 10), u.percent >= 90 ? O.red : u.percent >= 70 ? O.amber : O.jev), seg(` ${Math.round(u.percent)}%`, O.fg)])
   if (v.cost) mid.push([seg('cost ', O.soft), seg(usd(u.costUsd), O.fg), seg(u.costUsd === null ? '' : ' est', O.dim)], [seg(v.cost ? 'API-priced, not a bill' : '', O.dim)])
   if (v.tokens) {
-    const rows = Object.entries(s.models)
-    const sum = rows.reduce((n, [, r]) => n + r.input + r.output, 0)
-    mid.push([seg('tokens ', O.soft), seg(rows.length ? compact(sum) : 'N/A', O.fg), seg(rows.length ? ` · ${rows.length} model${rows.length === 1 ? '' : 's'}` : '', O.dim)])
+    // Summed from each request Claude Code reported, once each; nothing reported is N/A, never 0.
+    const rows = Object.values(s.models)
+    const sum = (k: 'input' | 'output' | 'cacheRead' | 'cacheWrite') => rows.reduce((n, r) => n + r[k], 0)
+    if (rows.length === 0) mid.push([seg('tokens ', O.soft), seg('N/A', O.fg)])
+    else {
+      mid.push([seg('tokens ', O.soft), seg(`in ${compact(sum('input'))}  out ${compact(sum('output'))}`, O.fg), seg(`  ${rows.length} model${rows.length === 1 ? '' : 's'}`, O.dim)])
+      mid.push([seg('cache ', O.soft), seg(`read ${compact(sum('cacheRead'))}  write ${compact(sum('cacheWrite'))}`, O.fg)])
+    }
   }
   if (mid.length) parts.push(mid)
   const rows: Line[] = []
