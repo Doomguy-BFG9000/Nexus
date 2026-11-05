@@ -82,6 +82,15 @@ export function rangeChoices(spec: Setting, current: string, def: string): strin
   return [...out].sort((a, b) => (a === 'max' ? 1 : b === 'max' ? -1 : Number(a) - Number(b)))
 }
 
+/** A value as a person reads it; what is stored and what `/nexus settings` takes are unchanged. */
+export function valueLabel(key: string, v: string): string {
+  if (key === 'centerpiece') return { blackhole: 'Black hole', classic: 'Classic orbit', off: 'Off' }[v] ?? v
+  if (key === 'animationSpeed') return { slow: 'Slow', veryslow: 'Very slow' }[v] ?? v
+  if (key === 'testRunner') return { allowlist: 'Known test commands', off: 'Off' }[v] ?? v
+  if (key === 'telemetry.preset') return v.charAt(0).toUpperCase() + v.slice(1)
+  return v
+}
+
 function SettingRow({ el, s, act, spec, width }: { el: El; s: Snapshot; act: Actions; spec: Setting; width: number }) {
   const { Box, Text, Select } = el
   const now = prefValue(s.prefs, spec.key)
@@ -95,14 +104,14 @@ function SettingRow({ el, s, act, spec, width }: { el: El; s: Snapshot; act: Act
           key={`set-${spec.key}`}
           label={label}
           value={now}
-          options={choices.map(o => ({ value: o, label: o === def ? `${o} (default)` : o }))}
+          options={choices.map(o => ({ value: o, label: o === def ? `${valueLabel(spec.key, o)} (default)` : valueLabel(spec.key, o) }))}
           onSelect={(value: string) => act.set(spec.key, value)}
         />
       ) : (
         <Text>
           <Text color={O.soft}>{label}</Text>
-          <Text color={O.fg} bold>{now}</Text>
-          <Text color={O.dim}>{now === def ? '  default' : `  default ${def}`}</Text>
+          <Text color={O.fg} bold>{valueLabel(spec.key, now)}</Text>
+          <Text color={O.dim}>{now === def ? '  default' : `  default ${valueLabel(spec.key, def)}`}</Text>
         </Text>
       )}
       <Text color={O.dim}>  {spec.help}</Text>

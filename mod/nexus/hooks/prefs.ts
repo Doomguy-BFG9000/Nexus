@@ -131,8 +131,8 @@ export type Setting = {
 /** One setting by its dotted name: what `/nexus settings <key> <value>` accepts. */
 export const SETTINGS: Setting[] = [
   { key: 'theme', section: 'appearance', label: 'Theme', options: ['orbit', 'classic'], help: 'Orbit is the new look; Classic is the original dashboard.', kind: 'display' },
-  { key: 'centerpiece', section: 'appearance', label: 'Animation', options: ['blackhole', 'classic', 'off'], help: 'Orbit only: the lead graphic. blackhole, the original orbit, or none.', kind: 'display' },
-  { key: 'animationSpeed', section: 'appearance', label: 'Animation speed', options: ['slow', 'veryslow'], help: 'How slowly the black hole drifts.', kind: 'display' },
+  { key: 'centerpiece', section: 'appearance', label: 'Animation', options: ['blackhole', 'classic', 'off'], help: 'Orbit only: the lead graphic (blackhole, classic orbit, or off).', kind: 'display' },
+  { key: 'animationSpeed', section: 'appearance', label: 'Animation speed', options: ['slow', 'veryslow'], help: 'How slowly the black hole drifts (slow or veryslow).', kind: 'display' },
   { key: 'paneColumns', section: 'appearance', label: 'Layout width', range: [40, PANE_MAX], help: `Columns the pane asks for; ${PANE_MAX} means as wide as allowed (/nexus width max).`, kind: 'display' },
   { key: 'density', section: 'appearance', label: 'Display density', options: ['comfortable', 'compact'], help: 'Orbit only: comfortable adds breathing room; compact fits more.', kind: 'display' },
   { key: 'animation', section: 'appearance', label: 'Reduced motion', options: ['auto', 'full', 'reduced', 'off'], help: 'auto follows Claude Code; reduced and off draw no movement.', kind: 'display' },

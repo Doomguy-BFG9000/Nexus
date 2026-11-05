@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in NEXUS does not work or draws wrongly
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. A short, reproducible report is the fastest to fix. **Do not paste API keys, tokens or private code.** Security problems: use the private route in SECURITY.md, not this form.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. /nexus settings theme orbit\n2. Ask for …\n3. …"
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: NEXUS and Claude Code versions
+      description: "NEXUS from /nexus doctor, Claude Code from `claude --version`"
+      placeholder: "NEXUS 0.8.0, Claude Code 2.1.318"
+    validations:
+      required: true
+  - type: dropdown
+    id: theme
+    attributes:
+      label: Theme
+      options: [Orbit, Classic, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and pane width
+      description: "For example iTerm2, 110 columns docked. Matters for drawing problems."
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of /nexus doctor
+      description: Read-only and never shows secrets.
+      render: text

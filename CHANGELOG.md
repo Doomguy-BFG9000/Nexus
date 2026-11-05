@@ -1,6 +1,32 @@
 # Changelog (NEXUS)
 
-## Unreleased: Haiku agents, benchmarked
+## 0.8.0 (2026-11-04): Orbit
+- **Orbit theme.** A new look for the dashboard: near-black, thin panels with an angled corner, warm orange for Sonnet, blue for Haiku, lavender for Opus and mint for Jev. It lays out for a split terminal (three layouts: 96+, 68+ and narrower columns; a list below 40), with a long task name shrinking before any state, time or alert. Classic is unchanged.
+  - **Upgrading keeps your look.** A store written before 0.8 stays on Classic with exactly the settings it had; only a first run gets Orbit. Switch with `/nexus settings theme orbit|classic`; the pane reopens so its background follows.
+- **Sonnet black hole.** The lead's graphic in Orbit: a dark event horizon, a dotted photon ring, a bright accretion disk across its lower part, nested lensing arcs and a few motes, drawn from braille dots (square dots, and density carries brightness without colour). Slow and ambient: a 24-second cycle (36 on *Very slow*) of 60 precomputed frames, with the horizon, ring and disk fixed. It moves only while the session works, runs about four redraws a second against Classic's ten, and nothing redraws when idle; reduced motion and *Animation → Off* draw one still frame and no timer. *Animation* can be Black hole, Classic orbit or Off.
+- **Four Haiku roles.** `nexus-test` joins Search, Grep and Audit. It runs the project's existing tests and reports `ran`, `result` and counts only as the output showed. Rows in Orbit handle any number of instances of a role.
+  - **Its commands are checked by NEXUS** on top of Claude Code's permissions: Read, Glob, Grep and Bash only; one known test command with only the flags that runner is listed as accepting; named targets for `make`, `rake`, `gradle` and `mvn`; no shell syntax, environment words, URLs, installs, snapshot updates or watch mode; foreground with a 5-minute cap; sandbox-loosening fields dropped; refused when NEXUS cannot decide. *Settings → Agents → Run tests* turns it off. **This is a guard on what the agent may ask for, not isolation:** the project's tests run with your permissions.
+  - **Reviewed by the Council** (security, architecture, performance). The first version used a flag denylist and was bypassed (`go test -toolexec`, `npm --node-options`, `mvn exec:exec`, `make test install`, quoted shell syntax, URLs). It was replaced by the allowlist and every reported bypass is a refusal test. The replacement was not re-reviewed by the Council.
+  - Overlaps `nexus-audit` and is **not benchmarked**. Not "use proactively": Claude Code decides when to delegate.
+- **Settings redesigned.** Four plain sections, each with a blurb and every setting with a plain label, one sentence and its default: **Appearance** (theme, animation, speed, layout width, density, reduced motion), **Agents** (Council, Run tests, stronger-mode suggestions), **Usage & Stats**, **Advanced** (Jev panel, Cache Guard, facts). Display settings and behaviour settings are told apart; Advanced stays off the main page. Reset one section, or everything after a confirmation; `/nexus settings export`. Every earlier `/nexus settings <key> <value>` still works.
+- **Telemetry visibility presets.** *Minimal*, *Standard* (default for new installs), *Full* and *Custom*, over eight things: context, costs, plan usage, tokens, execution times, routing, activity and warnings. This is display only: collection, routing and permissions never read it. Tokens now include cache reads and writes; Jev shows abstentions. Failures and limits at 90% are always shown. Missing figures are `N/A`, never `0`; per-agent cost stays `N/A` by design.
+- **Activity tape.** A compact live tape (agent started, finished or failed, advisor consulted, Council, Jev, test results), with repeats within two seconds dropped, and a full view on `a`. A test run is reported from the agent's own `result:` line, never more.
+- **Preferences v4.** New keys `theme`, `centerpiece`, `animationSpeed`, `density`, `testRunner` and `telemetry.preset`; `telemetry` gains `times`, `routing`, `activity` and `warnings`. `animation` keeps its meaning (the motion level, which is *Reduced motion* in Orbit's settings).
+- **Repository.** CI (plugin validate and test, manifest and link checks, a secret scan), CONTRIBUTING, SECURITY, issue forms and a pull request template.
+- Tests: 202 → 301.
+
+### Compatibility and known limits
+- Built against Claude Code 2.1.316; the test suite also passes on 2.1.318. The live dashboard was not driven in a real session on 2.1.318.
+- The README demo and the screenshots are rendered by NEXUS's own layout code from **sample data**, not captured from a live session.
+- A ~100-column Orbit needs a terminal about 220 columns wide (Claude Code caps a docked pane at 45%); Orbit adapts down to 40 columns.
+- The type check (`tsc`) runs locally against types Claude Code generates; it is not in CI.
+- No per-agent cost, and no cost for the advisor's own tokens: Claude Code does not report them.
+
+### Upgrading
+`claude plugin update nexus@muhzain05`, then start a new session. Your dashboard stays on Classic with its settings. To try Orbit: `/nexus settings theme orbit`. To use the Test agent, copy `skills/nexus/agents/nexus-test.md` to `~/.claude/agents/`.
+
+### Also merged since 0.7.0
+#### Haiku agents, benchmarked
 - **`nexus-audit` redesigned on benchmark evidence**, keeping its name:
   - It now checks the lead's own checkout read-only (Read, Glob, Grep, Bash). It has no Write, no `acceptEdits` and no isolated worktree.
   - The old design applied a pasted diff in a worktree. In one run it rebuilt the patch four times before `git apply` took it.
@@ -16,7 +42,7 @@
   See [docs/haiku-agents-benchmark.md](mod/nexus/docs/haiku-agents-benchmark.md).
 - Dashboard: no change. The audit card shows "in a worktree" only for an old definition that still declares `isolation: worktree`, and tests cover both.
 
-## Unreleased: Council reliability, security and performance audit
+#### Council reliability, security and performance audit
 - **Security:** reviewers are confined to the session's directories (symlinks followed), and a Grep `glob` that could select a secret file is refused; before, `glob: ".env*"` and a symlink with an innocent name returned a gitignored `.env`'s contents. `git_read` refuses pathspec magic (`:(glob)…`) and a bare `show` leaves secret files out of the patch. More credential files count as secrets. Reviewer-supplied finding paths are no longer opened by NEXUS to count lines unless they pass the same check; findings outside the repository are marked `outside-repo` and their evidence withheld.
 - **Verdict integrity:** finding text is one bounded line, so a reviewer (steered by the code it read) cannot start a forged `CRITICAL · …` line in the verdict. Text is cut before redaction (redaction was quadratic: 80k characters took 3–5 s of the plugin's event loop).
 - **State:** the snapshot hash now includes the content of untracked files, so editing a new file after a review is a new diff and shows STALE during a review (before, it was skipped as "already reviewed"). A reviewer launch the engine throws on no longer leaves Council saying "already running" for the rest of the session. The repository is the session's current directory, not where it started. A settings store that cannot be read at start no longer has its saved settings overwritten with defaults; the `NEXUS_COUNCIL_ACTIVATION` override is no longer saved by a later settings change.

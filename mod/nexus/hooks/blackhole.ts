@@ -114,9 +114,9 @@ export function drawBlackHole(w: number, rows: number, t: number | null): BhSpri
     }
   }
   const upper = [
-    { a: 1.5, b: 2.2, base: 1.1, steps: 2 },
-    { a: 2.0, b: 2.15, base: 0.95, steps: 3 },
-    { a: 2.55, b: 2.1, base: 0.8, steps: 2 },
+    { a: 1.75, b: 2.5, base: 1.1, steps: 2 },
+    { a: 2.2, b: 2.35, base: 0.95, steps: 3 },
+    { a: 2.65, b: 2.2, base: 0.8, steps: 2 },
     { a: 3.15, b: 2.05, base: 0.62, steps: 3 },
   ]
   const lower = [
@@ -161,7 +161,7 @@ export function drawBlackHole(w: number, rows: number, t: number | null): BhSpri
   // ---- photon ring: a dotted circle just outside the horizon ------------------------------
   {
     const rr = 1.08
-    const n = Math.max(24, Math.round((2 * Math.PI * rr * R) / 2.3))
+    const n = Math.max(24, Math.round((2 * Math.PI * rr * R) / 1.8))
     for (let i = 0; i < n; i++) {
       const th = 2 * Math.PI * (wrap(i + phase, n) / n)
       const [x, y] = at(rr * Math.cos(th), rr * Math.sin(th))
