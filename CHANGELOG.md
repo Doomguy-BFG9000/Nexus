@@ -1,5 +1,8 @@
 # Changelog (NEXUS)
 
+## Unreleased
+- Direct tests for numeric settings choices: small and wide ranges, the current value and default, deduplication, and common pane widths with `max` last. A range with thirteen integers now uses six sampled choices instead of being treated as twelve.
+
 ## 0.8.0 (2026-11-04): Orbit
 - **Orbit theme.** A new look for the dashboard: near-black, thin panels with an angled corner, warm orange for Sonnet, blue for Haiku, lavender for Opus and mint for Jev. It lays out for a split terminal (three layouts: 96+, 68+ and narrower columns; a list below 40), with a long task name shrinking before any state, time or alert. Classic is unchanged.
   - **Upgrading keeps your look.** A store written before 0.8 stays on Classic with exactly the settings it had; only a first run gets Orbit. Switch with `/nexus settings theme orbit|classic`; the pane reopens so its background follows.

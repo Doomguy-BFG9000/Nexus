@@ -71,7 +71,7 @@ function summary(s: Snapshot, id: SectionId): string {
 export function rangeChoices(spec: Setting, current: string, def: string): string[] {
   const [lo, hi] = spec.range!
   const set = new Set<number>()
-  if (hi - lo <= 12) for (let i = lo; i <= hi; i++) set.add(i)
+  if (hi - lo + 1 <= 12) for (let i = lo; i <= hi; i++) set.add(i)
   else for (let i = 0; i <= 5; i++) set.add(Math.round(lo + ((hi - lo) * i) / 5))
   const out = new Set<string>([...[...set].sort((a, b) => a - b).map(String)])
   if (spec.key === 'paneColumns') {
